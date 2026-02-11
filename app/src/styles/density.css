@@ -1,0 +1,67 @@
+/* ── Density Modes ──────────────────────────────────────────── */
+
+/* === Minimal Mode === */
+/* Tool calls: single line only */
+[data-density="minimal"] .tool-card-content {
+  display: none !important;
+}
+
+[data-density="minimal"] .tool-card-header {
+  pointer-events: none;
+}
+
+[data-density="minimal"] .tool-chevron {
+  display: none;
+}
+
+/* Thinking: hidden */
+[data-density="minimal"] .message-thinking {
+  display: none;
+}
+
+/* Metadata: hidden */
+[data-density="minimal"] .message-meta {
+  display: none;
+}
+
+/* Streaming dots: hidden */
+[data-density="minimal"] .message-streaming {
+  display: none;
+}
+
+/* Compact spacing */
+[data-density="minimal"] .chat-messages {
+  gap: var(--space-sm);
+}
+
+[data-density="minimal"] .message {
+  gap: 2px;
+}
+
+[data-density="minimal"] .message-content {
+  padding: var(--space-sm) var(--space-md);
+}
+
+/* === Normal Mode (default) === */
+/* No overrides needed - base styles apply */
+
+/* === Verbose Mode === */
+/* Thinking blocks: always expanded */
+[data-density="verbose"] .thinking-content {
+  display: block !important;
+}
+
+/* Tool cards: always expanded */
+[data-density="verbose"] .tool-card-content {
+  display: block !important;
+}
+
+/* Show all metadata */
+[data-density="verbose"] .message-meta {
+  display: flex;
+}
+
+/* Extra spacing for readability */
+[data-density="verbose"] .chat-messages {
+  gap: var(--space-xl);
+}

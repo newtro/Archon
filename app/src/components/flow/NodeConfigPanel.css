@@ -1,0 +1,267 @@
+.node-config-panel {
+  width: 280px;
+  border-left: 1px solid var(--border-primary);
+  background: var(--bg-primary);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  overflow-y: auto;
+}
+
+.node-config-header {
+  padding: 12px;
+  border-bottom: 1px solid var(--border-primary);
+}
+
+.node-config-header-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.node-config-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.node-config-kind {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.node-config-desc {
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin: 0;
+}
+
+/* ── Body ───────────────────────────────────────────────────── */
+
+.node-config-body {
+  flex: 1;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.config-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.config-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.config-label input[type="checkbox"] {
+  accent-color: var(--accent-indigo);
+}
+
+.config-input {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.config-input:focus {
+  border-color: var(--accent-indigo);
+}
+
+.config-textarea {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  outline: none;
+  resize: vertical;
+  line-height: 1.5;
+  transition: border-color 0.15s;
+}
+
+.config-textarea:focus {
+  border-color: var(--accent-indigo);
+}
+
+.config-hint {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.config-hint--warn {
+  color: var(--accent-amber, #f59e0b);
+}
+
+.config-range {
+  width: 100%;
+  accent-color: var(--accent-indigo);
+}
+
+/* ── Snap-point slider labels ──────────────────────────────── */
+
+.config-snap-labels {
+  display: flex;
+  justify-content: space-between;
+  margin-top: -2px;
+}
+
+.config-snap-label {
+  font-size: 9px;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 1px 2px;
+  border-radius: 2px;
+  transition: color 0.15s;
+  user-select: none;
+}
+
+.config-snap-label:hover {
+  color: var(--text-secondary);
+}
+
+.config-snap-label.active {
+  color: var(--accent-indigo);
+  font-weight: 600;
+}
+
+/* ── Model selector group ───────────────────────────────────── */
+
+.config-model-group {
+  display: flex;
+  gap: 4px;
+}
+
+.config-model-btn {
+  flex: 1;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+  padding: 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  text-transform: capitalize;
+}
+
+.config-model-btn:hover {
+  background: var(--bg-hover);
+}
+
+.config-model-btn.active {
+  border-color: var(--accent-indigo);
+  color: var(--accent-indigo);
+  background: rgba(99, 102, 241, 0.08);
+}
+
+/* ── Tag Input ─────────────────────────────────────────────── */
+
+.config-tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.config-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+}
+
+.config-tag-remove {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  transition: color 0.15s;
+  line-height: 1;
+}
+
+.config-tag-remove:hover {
+  color: var(--accent-red);
+}
+
+/* ── Select ────────────────────────────────────────────────── */
+
+.config-select {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.15s;
+  appearance: auto;
+}
+
+.config-select:focus {
+  border-color: var(--accent-indigo);
+}
+
+.config-select option {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+/* ── Footer ─────────────────────────────────────────────────── */
+
+.node-config-footer {
+  padding: 12px;
+  border-top: 1px solid var(--border-primary);
+}
+
+.node-config-delete {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 10px;
+  background: none;
+  border: 1px solid var(--accent-red);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: var(--accent-red);
+  cursor: pointer;
+  justify-content: center;
+  transition: background 0.15s;
+}
+
+.node-config-delete:hover {
+  background: rgba(239, 68, 68, 0.1);
+}

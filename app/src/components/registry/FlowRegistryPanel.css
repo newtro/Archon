@@ -1,0 +1,213 @@
+.registry-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg-primary);
+}
+
+.registry-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border-primary);
+}
+
+.registry-title-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-primary);
+}
+
+.registry-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.registry-subtitle {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 4px 0 0;
+}
+
+.registry-toolbar {
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--border-secondary);
+}
+
+.registry-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
+  padding: 6px 10px;
+  color: var(--text-muted);
+}
+
+.registry-search-input {
+  flex: 1;
+  background: none;
+  border: none;
+  outline: none;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.registry-search-input::placeholder {
+  color: var(--text-muted);
+}
+
+.registry-grid {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+  align-content: start;
+}
+
+.registry-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-lg);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: border-color 0.15s;
+}
+
+.registry-card:hover {
+  border-color: var(--accent-indigo);
+}
+
+.registry-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.registry-card-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.registry-card-stars {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--accent-amber);
+}
+
+.registry-card-desc {
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+  margin: 0;
+}
+
+.registry-card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.registry-tag {
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--bg-tertiary);
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.registry-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: auto;
+  padding-top: 4px;
+}
+
+.registry-card-author {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.registry-install-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  background: var(--accent-indigo);
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-weight: 500;
+  color: #fff;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.registry-install-btn:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.registry-install-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.registry-installed-badge {
+  font-size: 11px;
+  color: #22c55e;
+  font-weight: 500;
+}
+
+.registry-empty {
+  grid-column: 1 / -1;
+  text-align: center;
+  padding: 40px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.registry-loading {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.registry-offline-notice {
+  padding: 6px 20px;
+  font-size: 11px;
+  color: var(--accent-amber);
+  background: rgba(245, 158, 11, 0.08);
+  border-bottom: 1px solid var(--border-secondary);
+}
+
+.registry-footer {
+  padding: 8px 20px;
+  border-top: 1px solid var(--border-secondary);
+  text-align: center;
+}
+
+.registry-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+  text-decoration: none;
+  transition: color 0.15s;
+}
+
+.registry-link:hover {
+  color: var(--accent-indigo);
+}

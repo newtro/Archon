@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+target/
+app/src-tauri/target/
+
+# Environment and secrets
+.env
+.env.*
+*.key
+
+# IDE
+.vscode/
+.idea/
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Tauri
+app/src-tauri/WixTools/
+
+# Logs
+*.log

@@ -1,0 +1,202 @@
+.kv-builder {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.kv-empty {
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 8px;
+  text-align: center;
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-md);
+  border: 1px dashed var(--border-primary);
+}
+
+.kv-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 4px 8px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+}
+
+.kv-row-content {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.kv-key {
+  color: var(--accent-indigo);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kv-sep {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.kv-value {
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kv-row-clickable {
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  padding: 2px;
+  margin: -2px;
+  transition: background 0.1s;
+}
+
+.kv-row-clickable:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.kv-row-actions {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.kv-edit,
+.kv-delete {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  transition: color 0.15s, background 0.15s;
+}
+
+.kv-edit:hover {
+  color: var(--accent-indigo);
+  background: rgba(99, 102, 241, 0.1);
+}
+
+.kv-delete:hover {
+  color: var(--accent-red);
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.kv-add {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: 1px dashed var(--border-primary);
+  border-radius: var(--radius-md);
+  padding: 5px 10px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.kv-add:hover {
+  background: var(--bg-tertiary);
+  border-color: var(--accent-indigo);
+  color: var(--accent-indigo);
+}
+
+.kv-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--accent-indigo);
+  border-radius: var(--radius-md);
+}
+
+.kv-form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+
+.kv-form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.kv-form-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.kv-input {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+  padding: 4px 6px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  outline: none;
+  transition: border-color 0.15s;
+  min-width: 0;
+}
+
+.kv-input:focus {
+  border-color: var(--accent-indigo);
+}
+
+.kv-input::placeholder {
+  color: var(--text-muted);
+}
+
+.kv-form-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.kv-btn-add {
+  flex: 1;
+  background: var(--accent-indigo);
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  font-size: 11px;
+  color: white;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.kv-btn-add:hover {
+  opacity: 0.85;
+}
+
+.kv-btn-cancel {
+  background: none;
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.kv-btn-cancel:hover {
+  background: var(--bg-hover);
+}

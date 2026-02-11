@@ -1,0 +1,210 @@
+.list-builder {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.list-builder-empty {
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 10px;
+  text-align: center;
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-md);
+  border: 1px dashed var(--border-primary);
+}
+
+.list-builder-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 6px 8px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
+}
+
+.list-builder-item-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.list-builder-item-primary {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.list-builder-item-secondary {
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.list-builder-item-clickable {
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  padding: 2px;
+  margin: -2px;
+  transition: background 0.1s;
+}
+
+.list-builder-item-clickable:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.list-builder-item-actions {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.list-builder-edit,
+.list-builder-delete {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  transition: color 0.15s, background 0.15s;
+}
+
+.list-builder-edit:hover {
+  color: var(--accent-indigo);
+  background: rgba(99, 102, 241, 0.1);
+}
+
+.list-builder-delete:hover {
+  color: var(--accent-red);
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.list-builder-add {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: 1px dashed var(--border-primary);
+  border-radius: var(--radius-md);
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.list-builder-add:hover {
+  background: var(--bg-tertiary);
+  border-color: var(--accent-indigo);
+  color: var(--accent-indigo);
+}
+
+.list-builder-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--accent-indigo);
+  border-radius: var(--radius-md);
+}
+
+.list-builder-form-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.list-builder-form-actions .lb-btn-add {
+  flex: 1;
+  background: var(--accent-indigo);
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  font-size: 11px;
+  color: white;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.list-builder-form-actions .lb-btn-add:hover {
+  opacity: 0.85;
+}
+
+.list-builder-form-actions .lb-btn-cancel {
+  background: none;
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.list-builder-form-actions .lb-btn-cancel:hover {
+  background: var(--bg-hover);
+}
+
+/* Form inputs within list builder */
+.list-builder-form .lb-input {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+  padding: 5px 8px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.list-builder-form .lb-input:focus {
+  border-color: var(--accent-indigo);
+}
+
+.list-builder-form .lb-input::placeholder {
+  color: var(--text-muted);
+}
+
+.list-builder-form .lb-textarea {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+  padding: 5px 8px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  outline: none;
+  resize: vertical;
+  line-height: 1.5;
+  transition: border-color 0.15s;
+}
+
+.list-builder-form .lb-textarea:focus {
+  border-color: var(--accent-indigo);
+}
+
+.list-builder-form .lb-textarea::placeholder {
+  color: var(--text-muted);
+}
+
+.list-builder-form .lb-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: -2px;
+}

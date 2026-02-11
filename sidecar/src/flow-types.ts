@@ -1,0 +1,77 @@
+/**
+ * Shared flow types between frontend and sidecar.
+ * Mirrors app/src/lib/flow-types.ts serialization types.
+ */
+
+export type NodeKind =
+  | "llm" | "intent" | "evaluator"
+  | "tool" | "transformer"
+  | "router" | "parallel" | "human-review" | "sub-flow"
+  | "memory" | "handoff" | "project-context"
+  | "start" | "end";
+
+export type ToolPreset = "none" | "read-only" | "full-access";
+
+export interface SerializedNode {
+  id: string;
+  kind: NodeKind;
+  label: string;
+  x: number;
+  y: number;
+  config: {
+    kind: NodeKind;
+    config: Record<string, unknown>;
+  };
+}
+
+export interface SerializedEdge {
+  id: string;
+  source: string;
+  target: string;
+  sourceHandle: string | null;
+  targetHandle: string | null;
+  signal: string;
+}
+
+export interface FlowDefinition {
+  id: string;
+  name: string;
+  description: string;
+  nodes: SerializedNode[];
+  edges: SerializedEdge[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** Execution state tracked across the flow run */
+export interface FlowState {
+  task: string;
+  taskStatus: "pending" | "in_progress" | "completed" | "failed";
+  currentNodeId: string | null;
+  nodeOutputs: Record<string, NodeOutput>;
+  decisions: string[];
+  errors: Array<{ nodeId: string; error: string; turn: number }>;
+  turn: number;
+  /** Project context output from project-context nodes — injected into LLM systemPrompts */
+  projectContext?: string;
+}
+
+export interface NodeOutput {
+  nodeId: string;
+  kind: NodeKind;
+  result: string;
+  signal: string; // "success" | "fail" | "default" | custom
+  data?: Record<string, unknown>;
+  durationMs: number;
+}
+
+/** Messages sent from sidecar to frontend during flow execution */
+export type FlowExecutionEvent =
+  | { type: "flow_started"; executionId: string; flowId: string }
+  | { type: "node_started"; executionId: string; nodeId: string; kind: NodeKind }
+  | { type: "node_streaming"; executionId: string; nodeId: string; delta: string }
+  | { type: "node_completed"; executionId: string; nodeId: string; output: NodeOutput }
+  | { type: "node_error"; executionId: string; nodeId: string; error: string }
+  | { type: "flow_completed"; executionId: string; result: string; state: FlowState }
+  | { type: "flow_error"; executionId: string; error: string }
+  | { type: "human_review_requested"; executionId: string; nodeId: string; prompt: string };

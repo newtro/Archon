@@ -1,0 +1,197 @@
+:root {
+  /* Core palette - dark theme first */
+  --bg-primary: #0a0a0f;
+  --bg-secondary: #12121a;
+  --bg-tertiary: #1a1a25;
+  --bg-elevated: #22222f;
+  --bg-hover: #2a2a38;
+
+  --text-primary: #e8e8ed;
+  --text-secondary: #a0a0b0;
+  --text-muted: #6b6b7b;
+
+  --border-primary: #2a2a38;
+  --border-secondary: #1e1e2a;
+
+  /* Accent colors for tool types */
+  --accent-blue: #3b82f6;
+  --accent-green: #22c55e;
+  --accent-amber: #f59e0b;
+  --accent-purple: #8b5cf6;
+  --accent-cyan: #06b6d4;
+  --accent-teal: #14b8a6;
+  --accent-indigo: #6366f1;
+  --accent-slate: #64748b;
+  --accent-red: #ef4444;
+  --accent-gray: #9ca3af;
+
+  /* Accent */
+  --accent: #6366f1;
+
+  /* Spacing */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+
+  /* Legacy spacing aliases */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-lg: 16px;
+  --space-xl: 24px;
+
+  /* Border alias */
+  --border: var(--border-primary);
+
+  /* Font */
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", "Cascadia Code", "Consolas", monospace;
+  --font-size-xs: 11px;
+  --font-size-sm: 12px;
+  --font-size-base: 13px;
+  --font-size-lg: 14px;
+
+  /* Border radius */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: var(--font-size-base);
+  color: var(--text-primary);
+  background-color: var(--bg-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-primary);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+/* Code font */
+code, pre, .mono {
+  font-family: var(--font-mono);
+}
+
+/* Selection */
+::selection {
+  background-color: var(--accent-blue);
+  color: white;
+}
+
+/* App layout */
+.app-layout {
+  height: 100%;
+  display: grid;
+  grid-template-columns: 48px 1fr;
+  grid-template-rows: 32px 1fr 24px;
+  grid-template-areas:
+    "titlebar titlebar"
+    "sidebar main"
+    "statusbar statusbar";
+}
+
+.title-bar { grid-area: titlebar; }
+.sidebar { grid-area: sidebar; }
+.main-content { grid-area: main; overflow: hidden; }
+.status-bar { grid-area: statusbar; }
+
+/* Files view layout */
+.files-layout {
+  display: flex;
+  height: 100%;
+}
+
+.files-sidebar {
+  width: 260px;
+  border-right: 1px solid var(--border-primary);
+  flex-shrink: 0;
+}
+
+.files-main {
+  flex: 1;
+  overflow: hidden;
+}
+
+.files-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: var(--space-sm);
+}
+
+.files-empty-text {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+/* Placeholder panel for unbuilt views */
+.placeholder-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: var(--space-sm);
+}
+
+.placeholder-text {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.placeholder-sub {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* Workspace split layout */
+.workspace-split {
+  display: flex;
+  height: 100%;
+}
+
+.workspace-split-left,
+.workspace-split-right {
+  overflow: hidden;
+  height: 100%;
+}
+
+.workspace-split-left {
+  border-right: 1px solid var(--border-primary);
+}

@@ -1,0 +1,72 @@
+.node-palette {
+  width: 180px;
+  border-right: 1px solid var(--border-primary);
+  background: var(--bg-primary);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+
+.node-palette-header {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-primary);
+}
+
+.node-palette-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.node-palette-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 0;
+}
+
+.node-palette-group {
+  margin-bottom: 8px;
+}
+
+.node-palette-group-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  padding: 4px 12px;
+  opacity: 0.8;
+}
+
+.node-palette-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 12px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  transition: background 0.1s;
+  text-align: left;
+}
+
+.node-palette-item:hover {
+  background: var(--bg-hover);
+}
+
+.node-palette-icon {
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.node-palette-label {
+  font-size: 12px;
+  color: var(--text-primary);
+}

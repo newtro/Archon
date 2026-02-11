@@ -1,0 +1,238 @@
+/* ── Base Flow Node ──────────────────────────────────────────── */
+
+.flow-node {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-lg);
+  min-width: 180px;
+  font-family: var(--font-sans);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  transition: border-color 0.15s, box-shadow 0.15s;
+  position: relative;
+}
+
+.flow-node:hover {
+  border-color: var(--node-color);
+}
+
+.flow-node.selected {
+  border-color: var(--node-color);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--node-color) 30%, transparent);
+}
+
+/* ── Header ─────────────────────────────────────────────────── */
+
+.flow-node-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+}
+
+.flow-node-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.flow-node-title-group {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.flow-node-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flow-node-subtitle {
+  font-size: 10px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flow-node-kind {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--node-color);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  flex-shrink: 0;
+}
+
+/* ── Body ───────────────────────────────────────────────────── */
+
+.flow-node-body {
+  padding: 0 10px 8px;
+}
+
+.flow-node-preview {
+  font-size: 10px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flow-node-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
+.flow-node-tag {
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-secondary);
+}
+
+/* ── Resize ────────────────────────────────────────────────── */
+
+.flow-node-resize-line {
+  border-color: var(--accent-indigo) !important;
+}
+
+.flow-node-resize-handle {
+  width: 8px !important;
+  height: 8px !important;
+  border-radius: 2px !important;
+  background: var(--accent-indigo) !important;
+  border: none !important;
+  z-index: 5 !important;
+}
+
+/* ── Handles ────────────────────────────────────────────────── */
+
+.flow-handle {
+  width: 10px !important;
+  height: 10px !important;
+  border: 2px solid var(--bg-secondary) !important;
+  background: var(--text-muted) !important;
+  transition: background 0.15s, box-shadow 0.15s;
+  z-index: 10 !important;
+  pointer-events: all !important;
+}
+
+.flow-handle:hover {
+  background: var(--accent-indigo) !important;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.3);
+}
+
+.flow-handle-target {
+  top: -5px !important;
+}
+
+.flow-handle-source {
+  bottom: -5px !important;
+}
+
+.flow-handle-success {
+  background: var(--accent-green) !important;
+}
+
+.flow-handle-fail {
+  background: var(--accent-red) !important;
+}
+
+/* ── Dynamic Handle Labels ──────────────────────────────────── */
+
+.flow-node-handle-labels {
+  position: absolute;
+  bottom: -16px;
+  left: 0;
+  right: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+.flow-node-handle-label {
+  position: absolute;
+  transform: translateX(-50%);
+  font-size: 8px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  pointer-events: none;
+  font-weight: 500;
+}
+
+/* ── Execution State ─────────────────────────────────────────── */
+
+@keyframes node-pulse {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.3); }
+  50% { box-shadow: 0 0 0 6px rgba(99, 102, 241, 0.1); }
+}
+
+@keyframes node-spinner {
+  to { transform: rotate(360deg); }
+}
+
+.flow-node.exec-running,
+.flow-node.exec-streaming {
+  border-color: var(--accent-indigo);
+  animation: node-pulse 1.5s ease-in-out infinite;
+}
+
+.flow-node.exec-completed {
+  border-color: #22c55e;
+  box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.2);
+}
+
+.flow-node.exec-error {
+  border-color: #ef4444;
+  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.2);
+}
+
+/* ── Execution Bar (inside node) ─────────────────────────────── */
+
+.flow-node-exec-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 6px;
+  font-size: 10px;
+  color: var(--accent-indigo);
+}
+
+.flow-node-exec-bar.exec-completed {
+  color: #22c55e;
+}
+
+.flow-node-exec-bar.exec-error {
+  color: #ef4444;
+}
+
+.flow-node-exec-spinner {
+  width: 10px;
+  height: 10px;
+  border: 2px solid rgba(99, 102, 241, 0.2);
+  border-top-color: var(--accent-indigo);
+  border-radius: 50%;
+  animation: node-spinner 0.6s linear infinite;
+  flex-shrink: 0;
+}
+
+.flow-node-streaming-text {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 160px;
+}

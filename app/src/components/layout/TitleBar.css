@@ -1,0 +1,58 @@
+.title-bar {
+  grid-area: titlebar;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 32px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-secondary);
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+.title-bar-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  -webkit-app-region: drag;
+}
+
+.title-bar-icon {
+  width: 16px;
+  height: 16px;
+  -webkit-app-region: no-drag;
+}
+
+.title-bar-controls {
+  display: flex;
+  height: 100%;
+  -webkit-app-region: no-drag;
+}
+
+.title-bar-btn {
+  width: 46px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+  -webkit-app-region: no-drag;
+}
+
+.title-bar-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.title-bar-close:hover {
+  background: var(--accent-red);
+  color: #fff;
+}

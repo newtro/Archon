@@ -1,0 +1,206 @@
+.startup-page {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: var(--space-6);
+  background: var(--bg-primary);
+  gap: 32px;
+  overflow-y: auto;
+}
+
+/* ── Hero ─────────────────────────────────────────────────── */
+
+.startup-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.startup-title {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: -0.5px;
+}
+
+.startup-subtitle {
+  font-size: var(--font-size-lg);
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+/* ── Action cards ─────────────────────────────────────────── */
+
+.startup-actions {
+  display: flex;
+  gap: var(--space-4);
+}
+
+.startup-action-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  width: 150px;
+  height: 100px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-lg);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+}
+
+.startup-action-card:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.startup-action-label {
+  font-weight: 500;
+}
+
+/* ── Recent projects ──────────────────────────────────────── */
+
+.startup-recents {
+  width: 100%;
+  max-width: 480px;
+}
+
+.startup-recents-title {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: var(--space-2);
+  padding-left: var(--space-2);
+}
+
+.startup-recents-list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-secondary);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.startup-recent-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  cursor: pointer;
+  transition: background 0.1s ease;
+}
+
+.startup-recent-item:not(:last-child) {
+  border-bottom: 1px solid var(--border-secondary);
+}
+
+.startup-recent-item:hover {
+  background: var(--bg-hover);
+}
+
+.startup-recent-icon {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.startup-recent-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.startup-recent-name {
+  font-size: var(--font-size-base);
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.startup-recent-path {
+  font-size: var(--font-size-xs);
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.startup-recent-time {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.startup-recent-remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.1s ease, background 0.1s ease;
+  flex-shrink: 0;
+}
+
+.startup-recent-item:hover .startup-recent-remove {
+  opacity: 1;
+}
+
+.startup-recent-remove:hover {
+  background: var(--bg-tertiary);
+  color: var(--accent-red);
+}
+
+/* ── Footer links ─────────────────────────────────────────── */
+
+.startup-links {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.startup-link {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  transition: color 0.1s ease;
+}
+
+.startup-link:hover {
+  color: var(--accent);
+}
+
+.startup-link-sep {
+  width: 1px;
+  height: 14px;
+  background: var(--border-primary);
+}

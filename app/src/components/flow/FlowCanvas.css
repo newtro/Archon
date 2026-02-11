@@ -1,0 +1,297 @@
+/* ── Flow Canvas Layout ──────────────────────────────────────── */
+
+.flow-canvas-layout {
+  display: flex;
+  height: 100%;
+}
+
+.flow-canvas-wrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+/* ── Toolbar ────────────────────────────────────────────────── */
+
+.flow-canvas-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-primary);
+  background: var(--bg-primary);
+  z-index: 10;
+}
+
+.flow-canvas-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.flow-canvas-name:hover {
+  border-color: var(--border-primary);
+  background: var(--bg-tertiary);
+}
+
+.flow-canvas-name-input {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--accent-indigo);
+  border-radius: var(--radius-sm);
+  padding: 2px 6px;
+  outline: none;
+  min-width: 120px;
+}
+
+.flow-canvas-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.flow-canvas-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+  padding: 4px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.flow-canvas-icon-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.flow-canvas-icon-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.flow-toolbar-divider {
+  width: 1px;
+  height: 20px;
+  background: var(--border-primary);
+}
+
+.flow-canvas-save-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+  padding: 4px 12px;
+  font-size: 12px;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.2s, color 0.2s;
+  min-width: 72px;
+  justify-content: center;
+}
+
+.flow-canvas-save-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.flow-canvas-save-btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.flow-canvas-save-btn.save-success,
+.flow-canvas-icon-btn.save-success {
+  border-color: #22c55e;
+  color: #22c55e;
+}
+
+.flow-canvas-save-btn.save-error {
+  border-color: #ef4444;
+  color: #ef4444;
+}
+
+@keyframes save-spin {
+  to { transform: rotate(360deg); }
+}
+
+.flow-save-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--border-primary);
+  border-top-color: var(--text-primary);
+  border-radius: 50%;
+  animation: save-spin 0.6s linear infinite;
+  flex-shrink: 0;
+}
+
+/* ── Run / Stop / Reset controls ───────────────────────────── */
+
+.flow-run-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.flow-run-input {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--text-primary);
+  outline: none;
+  width: 200px;
+  transition: border-color 0.15s;
+}
+
+.flow-run-input:focus {
+  border-color: var(--accent-indigo);
+}
+
+.flow-run-input::placeholder {
+  color: var(--text-muted);
+}
+
+.flow-canvas-run-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: #22c55e;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #fff;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.flow-canvas-run-btn:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.flow-canvas-run-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.flow-canvas-stop-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: #ef4444;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #fff;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.flow-canvas-stop-btn:hover {
+  opacity: 0.9;
+}
+
+.flow-run-status-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.flow-run-status {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.flow-run-status.status-success {
+  color: #22c55e;
+}
+
+.flow-run-status.status-error {
+  color: #ef4444;
+}
+
+.flow-canvas-reset-btn {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.flow-canvas-reset-btn:hover {
+  background: var(--bg-hover);
+}
+
+/* ── React Flow overrides ───────────────────────────────────── */
+
+.flow-canvas {
+  background: var(--bg-primary) !important;
+}
+
+.flow-controls {
+  background: var(--bg-secondary) !important;
+  border: 1px solid var(--border-primary) !important;
+  border-radius: var(--radius-md) !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3) !important;
+}
+
+.flow-controls button {
+  background: var(--bg-secondary) !important;
+  border-bottom: 1px solid var(--border-secondary) !important;
+  color: var(--text-secondary) !important;
+  fill: var(--text-secondary) !important;
+  width: 28px !important;
+  height: 28px !important;
+}
+
+.flow-controls button:hover {
+  background: var(--bg-hover) !important;
+  color: var(--text-primary) !important;
+  fill: var(--text-primary) !important;
+}
+
+.flow-controls button svg {
+  fill: currentColor !important;
+}
+
+.flow-minimap {
+  background: var(--bg-secondary) !important;
+  border: 1px solid var(--border-primary) !important;
+  border-radius: var(--radius-md) !important;
+}
+
+/* React Flow edge styling */
+.react-flow__edge-path {
+  stroke-width: 2;
+}
+
+.react-flow__connection-line {
+  stroke: var(--accent-indigo) !important;
+  stroke-width: 2 !important;
+}
+
+/* Selection box */
+.react-flow__selection {
+  background: rgba(99, 102, 241, 0.08) !important;
+  border: 1px solid var(--accent-indigo) !important;
+}
