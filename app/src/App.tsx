@@ -52,6 +52,13 @@ function App() {
   const [previewFlow, setPreviewFlow] = useState<FlowDefinition | null>(null);
   const flowChatMessageRef = useRef<string | null>(null);
 
+  /** Refresh the flow list from the database */
+  const refreshFlows = useCallback(() => {
+    listFlows()
+      .then((list) => setFlows(list.map((f) => ({ id: f.id, name: f.name }))))
+      .catch(() => {});
+  }, []);
+
   const { layout } = useWorkspace();
 
   // Load persisted model on mount
@@ -96,11 +103,9 @@ function App() {
   // Load flow list on mount and when switching to chat view
   useEffect(() => {
     if (activeView === "chat" || activeView === "flows") {
-      listFlows()
-        .then((list) => setFlows(list.map((f) => ({ id: f.id, name: f.name }))))
-        .catch(() => {});
+      refreshFlows();
     }
-  }, [activeView]);
+  }, [activeView, refreshFlows]);
 
   // Load full flow definition when a flow is selected (for diagram preview)
   useEffect(() => {
@@ -130,7 +135,7 @@ function App() {
     (msg: WSMessageToSidecar) => sendRef.current(msg),
   );
 
-  const { contextViewState, handleContextViewEvent, handleClassification, handleContextStateUpdate } = useContextView();
+  const { contextViewState, handleContextViewEvent, handleClassification, handleContextStateUpdate, handleContextRawResponse, getRawMessages } = useContextView();
 
   // Wrap handleFlowEvent to also map flow events into chat messages
   const handleFlowEventWithChat = useCallback((event: FlowExecutionEvent) => {
@@ -225,6 +230,12 @@ function App() {
     onContextViewEvent: handleContextViewEvent,
     onContextClassification: handleClassification,
     onContextStateUpdate: handleContextStateUpdate,
+    onContextRawResponse: handleContextRawResponse,
+    onFlowPreview: (flow) => {
+      // AI created/modified a flow — show preview and refresh flow list
+      setPreviewFlow(flow);
+      refreshFlows();
+    },
     onConnect: (directSend) => {
       // Send persisted API key to sidecar immediately on WebSocket open
       getSetting<string>("apiKey", "").then((key) => {
@@ -494,6 +505,8 @@ function App() {
             onClearLogs={() => setLogEntries([])}
             previewFlow={previewFlow}
             contextViewState={contextViewState}
+            onRequestRawContext={(executionId, nodeId) => send({ type: "get_context_raw", executionId, nodeId })}
+            getRawMessages={getRawMessages}
           />
         </div>
       </div>

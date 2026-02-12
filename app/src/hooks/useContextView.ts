@@ -32,10 +32,16 @@ function computeBudgetWarning(percentFull: number): "none" | "yellow" | "red" {
   return "none";
 }
 
+/** Cache for on-demand raw message responses. Key: `${executionId}:${nodeId}` */
+type RawMessagesCache = Map<string, unknown[]>;
+
 export function useContextView() {
   const [contextViewState, setContextViewState] = useState<ContextViewState>(INITIAL_STATE);
   const stateRef = useRef(contextViewState);
   stateRef.current = contextViewState;
+
+  // Raw messages cache — populated by on-demand responses from sidecar
+  const rawMessagesCache = useRef<RawMessagesCache>(new Map());
 
   const handleContextWindowSnapshot = useCallback((snapshot: ContextWindowSnapshot) => {
     setContextViewState((prev) => ({
@@ -90,8 +96,21 @@ export function useContextView() {
     }
   }, [handleContextWindowSnapshot, handleBriefingDiff, handleTokenUsageUpdate]);
 
+  /** Handle raw context response from sidecar */
+  const handleContextRawResponse = useCallback((nodeId: string, executionId: string, messages: unknown[]) => {
+    rawMessagesCache.current.set(`${executionId}:${nodeId}`, messages);
+    // Trigger a state update so components re-render with the new data
+    setContextViewState((prev) => ({ ...prev }));
+  }, []);
+
+  /** Get cached raw messages for a node (returns null if not yet loaded) */
+  const getRawMessages = useCallback((executionId: string, nodeId: string): unknown[] | null => {
+    return rawMessagesCache.current.get(`${executionId}:${nodeId}`) ?? null;
+  }, []);
+
   const resetContextView = useCallback(() => {
     setContextViewState(INITIAL_STATE);
+    rawMessagesCache.current.clear();
   }, []);
 
   return {
@@ -99,6 +118,8 @@ export function useContextView() {
     handleContextViewEvent,
     handleClassification,
     handleContextStateUpdate,
+    handleContextRawResponse,
+    getRawMessages,
     resetContextView,
   };
 }

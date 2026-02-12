@@ -17,9 +17,11 @@ interface FlowExecutionPanelProps {
   onClearLogs: () => void;
   previewFlow?: FlowDefinition | null;
   contextViewState?: ContextViewState;
+  onRequestRawContext?: (executionId: string, nodeId: string) => void;
+  getRawMessages?: (executionId: string, nodeId: string) => unknown[] | null;
 }
 
-export function FlowExecutionPanel({ execState, onCancel, onReset, logEntries, onClearLogs, previewFlow, contextViewState }: FlowExecutionPanelProps) {
+export function FlowExecutionPanel({ execState, onCancel, onReset, logEntries, onClearLogs, previewFlow, contextViewState, onRequestRawContext, getRawMessages }: FlowExecutionPanelProps) {
   const { status, nodeList, nodeStates, flow } = execState;
   // Use the executing flow if available, otherwise fall back to the selected preview flow
   const diagramFlow = flow ?? previewFlow ?? null;
@@ -117,7 +119,7 @@ export function FlowExecutionPanel({ execState, onCancel, onReset, logEntries, o
       {/* Content: list, diagram, debug, or context */}
       {viewMode === "context" ? (
         contextViewState ? (
-          <ContextView state={contextViewState} />
+          <ContextView state={contextViewState} onRequestRaw={onRequestRawContext} getRawMessages={getRawMessages} />
         ) : (
           <div className="flow-exec-empty">
             <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" opacity="0.2">

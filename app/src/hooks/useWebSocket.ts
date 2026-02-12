@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import type { WSMessageToSidecar, WSMessageFromSidecar, ChatMessage, FlowExecutionEvent, LogEntryEvent, LogEntry, ContextViewEvent, ContextClassification } from "../lib/types";
+import type { FlowDefinition } from "../lib/flow-types";
+import { loadFlow, saveFlow, deleteFlow as deleteFlowFromDb, listFlowsWithCounts, getFlowByName, applyFlowPatch, saveFlowVersion, type FlowPatch } from "../lib/flow-storage";
+import { autoLayoutFlow } from "../lib/flow-layout";
 
 interface UseWebSocketOptions {
   onMessage: (msg: ChatMessage) => void;
@@ -10,6 +13,9 @@ interface UseWebSocketOptions {
   onContextViewEvent?: (event: ContextViewEvent) => void;
   onContextClassification?: (classification: ContextClassification) => void;
   onContextStateUpdate?: (state: unknown) => void;
+  onContextRawResponse?: (nodeId: string, executionId: string, messages: unknown[]) => void;
+  /** Called when the AI creates or updates a flow — for preview in chat */
+  onFlowPreview?: (flow: FlowDefinition) => void;
 }
 
 const SIDECAR_PORT = 9399;
@@ -32,7 +38,7 @@ function getToolLogSummary(name: string, args: Record<string, unknown>): string 
   }
 }
 
-export function useWebSocket({ onMessage, onStatusChange, onFlowEvent, onConnect, onLogEntry, onContextViewEvent, onContextClassification, onContextStateUpdate }: UseWebSocketOptions) {
+export function useWebSocket({ onMessage, onStatusChange, onFlowEvent, onConnect, onLogEntry, onContextViewEvent, onContextClassification, onContextStateUpdate, onContextRawResponse, onFlowPreview }: UseWebSocketOptions) {
   const wsRef = useRef<WebSocket | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<string>("disconnected");
   const reconnectAttempts = useRef(0);
@@ -47,6 +53,8 @@ export function useWebSocket({ onMessage, onStatusChange, onFlowEvent, onConnect
   const onContextViewEventRef = useRef(onContextViewEvent);
   const onContextClassificationRef = useRef(onContextClassification);
   const onContextStateUpdateRef = useRef(onContextStateUpdate);
+  const onContextRawResponseRef = useRef(onContextRawResponse);
+  const onFlowPreviewRef = useRef(onFlowPreview);
   onMessageRef.current = onMessage;
   onStatusChangeRef.current = onStatusChange;
   onFlowEventRef.current = onFlowEvent;
@@ -55,6 +63,8 @@ export function useWebSocket({ onMessage, onStatusChange, onFlowEvent, onConnect
   onContextViewEventRef.current = onContextViewEvent;
   onContextClassificationRef.current = onContextClassification;
   onContextStateUpdateRef.current = onContextStateUpdate;
+  onContextRawResponseRef.current = onContextRawResponse;
+  onFlowPreviewRef.current = onFlowPreview;
 
   // Accumulator for streaming assistant messages
   const streamingMessage = useRef<ChatMessage | null>(null);
@@ -526,6 +536,192 @@ export function useWebSocket({ onMessage, onStatusChange, onFlowEvent, onConnect
       case "token_usage_update":
         onContextViewEventRef.current?.(data as ContextViewEvent);
         break;
+
+      // On-demand raw context response
+      case "context_raw_response": {
+        const raw = data as { type: "context_raw_response"; nodeId: string; executionId: string; messages: unknown[] };
+        onContextRawResponseRef.current?.(raw.nodeId, raw.executionId, raw.messages);
+        break;
+      }
+
+      // ── Flow tool requests from sidecar (AI agent) ─────────────────
+      case "flow_tool_create":
+        handleFlowToolCreate(data as Record<string, unknown>);
+        break;
+
+      case "flow_tool_get":
+        handleFlowToolGet(data as Record<string, unknown>);
+        break;
+
+      case "flow_tool_list":
+        handleFlowToolList(data as Record<string, unknown>);
+        break;
+
+      case "flow_tool_update":
+        handleFlowToolUpdate(data as Record<string, unknown>);
+        break;
+
+      case "flow_tool_delete":
+        handleFlowToolDelete(data as Record<string, unknown>);
+        break;
+    }
+  };
+
+  /** Send a flow tool response back to the sidecar */
+  const sendFlowToolResponse = (requestId: string, success: boolean, data?: unknown, error?: string) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        type: "flow_tool_response",
+        requestId,
+        success,
+        data,
+        error,
+      }));
+    }
+  };
+
+  /** Handle flow_tool_create: create a new flow from AI-generated definition */
+  const handleFlowToolCreate = async (msg: Record<string, unknown>) => {
+    const requestId = msg.requestId as string;
+    try {
+      const flowData = msg.flow as Record<string, unknown>;
+      const now = Date.now();
+      const flowId = crypto.randomUUID();
+
+      // Build serialized nodes with proper structure
+      const rawNodes = flowData.nodes as Array<Record<string, unknown>>;
+      const rawEdges = flowData.edges as Array<Record<string, unknown>>;
+
+      const nodes = rawNodes.map(n => ({
+        id: n.id as string,
+        kind: n.kind as string,
+        label: n.label as string,
+        x: (n.x as number) ?? 0,
+        y: (n.y as number) ?? 0,
+        config: n.config as { kind: string; config: Record<string, unknown> },
+      }));
+
+      const edges = rawEdges.map((e, i) => ({
+        id: `edge-${i}-${crypto.randomUUID().slice(0, 8)}`,
+        source: e.source as string,
+        target: e.target as string,
+        sourceHandle: (e.sourceHandle as string) ?? null,
+        targetHandle: (e.targetHandle as string) ?? null,
+        signal: (e.signal as string) ?? "default",
+      }));
+
+      const flow: FlowDefinition = {
+        id: flowId,
+        name: flowData.name as string,
+        description: (flowData.description as string) ?? "",
+        nodes: nodes as FlowDefinition["nodes"],
+        edges: edges as FlowDefinition["edges"],
+        createdAt: now,
+        updatedAt: now,
+        ...(flowData.contextAgentConfig ? { contextAgentConfig: flowData.contextAgentConfig as FlowDefinition["contextAgentConfig"] } : {}),
+      };
+
+      // Apply auto-layout to compute final positions
+      autoLayoutFlow(flow);
+
+      // Save to database
+      await saveFlow(flow);
+      await saveFlowVersion(flowId, "create", `Created "${flow.name}"`, flow);
+
+      // Emit preview
+      onFlowPreviewRef.current?.(flow);
+
+      sendFlowToolResponse(requestId, true, {
+        flowId,
+        name: flow.name,
+        nodeCount: flow.nodes.length,
+        edgeCount: flow.edges.length,
+      });
+    } catch (err) {
+      sendFlowToolResponse(requestId, false, undefined, err instanceof Error ? err.message : "Unknown error");
+    }
+  };
+
+  /** Handle flow_tool_get: retrieve a flow by ID or name */
+  const handleFlowToolGet = async (msg: Record<string, unknown>) => {
+    const requestId = msg.requestId as string;
+    try {
+      let flow: FlowDefinition | null = null;
+      if (msg.flowId) {
+        flow = await loadFlow(msg.flowId as string);
+      } else if (msg.name) {
+        flow = await getFlowByName(msg.name as string);
+      }
+      if (!flow) {
+        sendFlowToolResponse(requestId, false, undefined, "Flow not found");
+        return;
+      }
+      sendFlowToolResponse(requestId, true, flow);
+    } catch (err) {
+      sendFlowToolResponse(requestId, false, undefined, err instanceof Error ? err.message : "Unknown error");
+    }
+  };
+
+  /** Handle flow_tool_list: list all flows */
+  const handleFlowToolList = async (msg: Record<string, unknown>) => {
+    const requestId = msg.requestId as string;
+    try {
+      const flows = await listFlowsWithCounts();
+      sendFlowToolResponse(requestId, true, flows);
+    } catch (err) {
+      sendFlowToolResponse(requestId, false, undefined, err instanceof Error ? err.message : "Unknown error");
+    }
+  };
+
+  /** Handle flow_tool_update: apply a patch to an existing flow */
+  const handleFlowToolUpdate = async (msg: Record<string, unknown>) => {
+    const requestId = msg.requestId as string;
+    try {
+      const flowId = msg.flowId as string;
+      const patch = msg.patch as FlowPatch;
+      const flow = await applyFlowPatch(flowId, patch);
+      if (!flow) {
+        sendFlowToolResponse(requestId, false, undefined, `Flow "${flowId}" not found`);
+        return;
+      }
+
+      // Re-apply auto-layout after patch
+      autoLayoutFlow(flow);
+      flow.updatedAt = Date.now();
+      await saveFlow(flow);
+
+      // Emit preview
+      onFlowPreviewRef.current?.(flow);
+
+      sendFlowToolResponse(requestId, true, {
+        flowId: flow.id,
+        name: flow.name,
+        nodeCount: flow.nodes.length,
+        edgeCount: flow.edges.length,
+      });
+    } catch (err) {
+      sendFlowToolResponse(requestId, false, undefined, err instanceof Error ? err.message : "Unknown error");
+    }
+  };
+
+  /** Handle flow_tool_delete: delete a flow */
+  const handleFlowToolDelete = async (msg: Record<string, unknown>) => {
+    const requestId = msg.requestId as string;
+    try {
+      const flowId = msg.flowId as string;
+      const flow = await loadFlow(flowId);
+      if (!flow) {
+        sendFlowToolResponse(requestId, false, undefined, `Flow "${flowId}" not found`);
+        return;
+      }
+
+      // Save version before deletion
+      await saveFlowVersion(flowId, "delete", `Deleted "${flow.name}"`, flow);
+      await deleteFlowFromDb(flowId);
+
+      sendFlowToolResponse(requestId, true, { deleted: true, name: flow.name });
+    } catch (err) {
+      sendFlowToolResponse(requestId, false, undefined, err instanceof Error ? err.message : "Unknown error");
     }
   };
 

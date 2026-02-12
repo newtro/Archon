@@ -13,6 +13,7 @@ import type {
 import { getGlobalProjectRoot } from "./agent.js";
 import { loadProjectContext } from "./context-loader.js";
 import type { ContextAgent } from "./context-agent.js";
+import { countTokenBreakdown, resetTokenCounterClient } from "./token-counter.js";
 
 /** Resolve a tool preset to the SDK `tools` option */
 function resolveToolPreset(preset: ToolPreset | undefined): Options["tools"] {
@@ -82,6 +83,17 @@ function getNextNodes(flow: FlowDefinition, nodeId: string, signal: string): Ser
 
 const activeExecutions = new Map<string, AbortController>();
 
+// ── Cumulative session stats (per execution) ──────────────────
+interface CumulativeSessionStats {
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCost: number;
+}
+const executionStats = new Map<string, CumulativeSessionStats>();
+
+// ── Raw message cache for on-demand context retrieval ────────
+const rawMessageCache = new Map<string, unknown[]>();  // key: `${executionId}:${nodeId}`
+
 // ── Human Review pending promises ────────────────────────────
 const pendingReviews = new Map<string, { resolve: (approved: boolean) => void }>();
 
@@ -97,6 +109,11 @@ export function resolveHumanReview(nodeId: string, approved: boolean): void {
   } else {
     console.warn(`[flow-engine] No pending review found for node ${nodeId}`);
   }
+}
+
+/** Retrieve cached raw messages for a node (on-demand context view). */
+export function getRawMessages(executionId: string, nodeId: string): unknown[] | null {
+  return rawMessageCache.get(`${executionId}:${nodeId}`) ?? null;
 }
 
 export function cancelExecution(executionId: string): void {
@@ -119,6 +136,10 @@ export async function executeFlow(
   const executionId = crypto.randomUUID();
   const abortController = new AbortController();
   activeExecutions.set(executionId, abortController);
+  executionStats.set(executionId, { totalInputTokens: 0, totalOutputTokens: 0, totalCost: 0 });
+
+  // Reset the Anthropic client when API key may have changed
+  resetTokenCounterClient();
 
   const state: FlowState = {
     task: userInput,
@@ -163,6 +184,11 @@ export async function executeFlow(
     }
   } finally {
     activeExecutions.delete(executionId);
+    executionStats.delete(executionId);
+    // Clean up raw message cache entries for this execution
+    for (const key of rawMessageCache.keys()) {
+      if (key.startsWith(`${executionId}:`)) rawMessageCache.delete(key);
+    }
   }
 }
 
@@ -364,7 +390,7 @@ Use your tools (Read, Glob, Grep, etc.) to explore and understand this project. 
 
   for await (const event of query({ prompt, options })) {
     if (event.type === "stream_event") {
-      const streamEvent = event.event as Record<string, unknown>;
+      const streamEvent = event.event as unknown as Record<string, unknown>;
       const streamType = streamEvent.type as string;
 
       // Detect tool_use blocks from content_block_start (earliest detection point)
@@ -438,8 +464,8 @@ Use your tools (Read, Glob, Grep, etc.) to explore and understand this project. 
         let resultText = "";
         let isError = false;
 
-        const e = event as Record<string, unknown>;
-        const msgContent = (event.message as Record<string, unknown>)?.content;
+        const e = event as unknown as Record<string, unknown>;
+        const msgContent = (event.message as unknown as Record<string, unknown>)?.content;
         if (Array.isArray(msgContent)) {
           for (const block of msgContent) {
             const b = block as Record<string, unknown>;
@@ -485,13 +511,64 @@ Use your tools (Read, Glob, Grep, etc.) to explore and understand this project. 
       }
     } else if (event.type === "result") {
       totalCost = event.total_cost_usd ?? 0;
-      // Emit token usage update for context view
-      const usage = event.usage as { input_tokens?: number; output_tokens?: number } | undefined;
+      const usage = event.usage as { input_tokens?: number; output_tokens?: number; cache_creation_input_tokens?: number; cache_read_input_tokens?: number } | undefined;
       const inputTokens = usage?.input_tokens ?? 0;
       const outputTokens = usage?.output_tokens ?? 0;
-      // Derive max context from model
-      const maxTokens = model === "opus" ? 200_000 : model === "sonnet" ? 200_000 : model === "haiku" ? 200_000 : 200_000;
+      const cacheCreation = usage?.cache_creation_input_tokens;
+      const cacheRead = usage?.cache_read_input_tokens;
+
+      // Update cumulative session stats
+      const cumulative = executionStats.get(executionId);
+      if (cumulative) {
+        cumulative.totalInputTokens += inputTokens;
+        cumulative.totalOutputTokens += outputTokens;
+        cumulative.totalCost += totalCost;
+      }
+
+      // Get accurate token breakdown via countTokens API
+      const segments: Array<{ key: string; text: string }> = [];
+      if (fullSystemPrompt) segments.push({ key: "systemPrompt", text: fullSystemPrompt });
+      if (contextAgent && prompt) segments.push({ key: "briefing", text: prompt });
+      if (!contextAgent && history?.length) {
+        const histText = history.map((m) => `${m.role}: ${m.content}`).join("\n");
+        segments.push({ key: "conversationHistory", text: histText });
+      }
+      if (contextOutput) segments.push({ key: "fileContents", text: contextOutput });
+      if (!contextAgent && prompt !== input) segments.push({ key: "other", text: prompt });
+
+      let breakdown: Record<string, number>;
+      let estimatedTotal: number;
+      try {
+        breakdown = await countTokenBreakdown(model, segments);
+        estimatedTotal = Object.values(breakdown).reduce((a, b) => a + b, 0);
+      } catch {
+        // Fallback to char estimates
+        breakdown = {};
+        for (const seg of segments) breakdown[seg.key] = Math.ceil(seg.text.length / 4);
+        estimatedTotal = Object.values(breakdown).reduce((a, b) => a + b, 0);
+      }
+
+      // Compute the unaccounted tokens (tool defs, tool results, etc.)
+      const toolDefTokens = Math.max(0, inputTokens - estimatedTotal);
+
+      const maxTokens = 200_000; // All current Claude models
       const percentFull = maxTokens > 0 ? (inputTokens / maxTokens) * 100 : 0;
+
+      // Build sections array
+      const sections: Array<{ name: string; tokenCount: number; summary: string; category: "system" | "briefing" | "tools" | "conversation" | "files" | "other" }> = [];
+      if (breakdown.systemPrompt) sections.push({ name: "System Prompt", tokenCount: breakdown.systemPrompt, summary: systemPrompt?.slice(0, 80) || "Default system prompt", category: "system" });
+      if (breakdown.briefing) sections.push({ name: "Briefing", tokenCount: breakdown.briefing, summary: prompt.slice(0, 80), category: "briefing" });
+      if (toolDefTokens > 0) sections.push({ name: "Tool Definitions", tokenCount: toolDefTokens, summary: `Inferred from actual usage vs breakdown`, category: "tools" });
+      if (breakdown.conversationHistory) sections.push({ name: "Conversation History", tokenCount: breakdown.conversationHistory, summary: `${history?.length ?? 0} messages`, category: "conversation" });
+      if (breakdown.fileContents) sections.push({ name: "Project Context", tokenCount: breakdown.fileContents, summary: `${contextOutput?.length ?? 0} chars of project context`, category: "files" });
+      if (breakdown.other) sections.push({ name: "Other", tokenCount: breakdown.other, summary: "Additional prompt content", category: "other" });
+
+      // Cache raw messages for on-demand retrieval
+      const rawMessages: unknown[] = [
+        { role: "system", content: fullSystemPrompt },
+        { role: "user", content: prompt },
+      ];
+      rawMessageCache.set(`${executionId}:${node.id}`, rawMessages);
 
       // Emit context window snapshot
       send(ws, {
@@ -504,39 +581,38 @@ Use your tools (Read, Glob, Grep, etc.) to explore and understand this project. 
         maxTokens,
         timestamp: Date.now(),
         breakdown: {
-          systemPrompt: Math.round(fullSystemPrompt.length / 4), // rough estimate
-          briefing: contextAgent ? Math.round(prompt.length / 4) : 0,
-          toolDefinitions: 0, // not easily measurable without countTokens API
-          conversationHistory: !contextAgent && history ? Math.round(history.reduce((s, m) => s + m.content.length, 0) / 4) : 0,
+          systemPrompt: breakdown.systemPrompt ?? 0,
+          briefing: breakdown.briefing ?? 0,
+          toolDefinitions: toolDefTokens,
+          conversationHistory: breakdown.conversationHistory ?? 0,
           toolResults: 0,
-          fileContents: contextOutput ? Math.round(contextOutput.length / 4) : 0,
-          other: 0,
+          fileContents: breakdown.fileContents ?? 0,
+          other: breakdown.other ?? 0,
         },
         totalInputTokens: inputTokens,
         percentFull,
-        sections: [
-          { name: "System Prompt", tokenCount: Math.round(fullSystemPrompt.length / 4), summary: systemPrompt?.slice(0, 80) || "Default system prompt", category: "system" as const },
-          ...(contextAgent ? [{ name: "Briefing", tokenCount: Math.round(prompt.length / 4), summary: prompt.slice(0, 80), category: "briefing" as const }] : []),
-          ...(contextOutput ? [{ name: "Project Context", tokenCount: Math.round(contextOutput.length / 4), summary: `${contextOutput.length} chars of project context`, category: "files" as const }] : []),
-          ...(!contextAgent && history?.length ? [{ name: "Conversation History", tokenCount: Math.round(history.reduce((s, m) => s + m.content.length, 0) / 4), summary: `${history.length} messages`, category: "conversation" as const }] : []),
-        ],
+        sections,
       });
 
-      // Emit token usage update
+      // Emit token usage update with estimated vs actual delta
+      const delta = inputTokens - estimatedTotal;
       send(ws, {
         type: "token_usage_update",
         sessionId: executionId,
         executionId,
         nodeId: node.id,
         timestamp: Date.now(),
-        actual: { inputTokens, outputTokens },
-        estimated: 0,
-        delta: 0,
-        cumulativeSession: {
-          totalInputTokens: inputTokens,
-          totalOutputTokens: outputTokens,
-          totalCost: totalCost,
+        actual: {
+          inputTokens,
+          outputTokens,
+          ...(cacheCreation != null ? { cacheCreationInputTokens: cacheCreation } : {}),
+          ...(cacheRead != null ? { cacheReadInputTokens: cacheRead } : {}),
         },
+        estimated: estimatedTotal,
+        delta,
+        cumulativeSession: cumulative
+          ? { ...cumulative }
+          : { totalInputTokens: inputTokens, totalOutputTokens: outputTokens, totalCost: totalCost },
       });
     }
   }

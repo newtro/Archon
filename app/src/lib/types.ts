@@ -111,7 +111,8 @@ export type WSMessageToSidecar =
   | { type: "set_project_root"; path: string }
   | { type: "ping" }
   | { type: "execute_flow"; flow: unknown; input: string; history?: HistoryMessage[]; sessionId?: string }
-  | { type: "cancel_flow"; executionId: string };
+  | { type: "cancel_flow"; executionId: string }
+  | { type: "get_context_raw"; executionId: string; nodeId: string };
 
 /** Context Agent transparency events */
 export type ContextAgentEvent =
@@ -255,8 +256,16 @@ export type WSMessageFromSidecar =
   | ContextWindowSnapshot
   | BriefingDiff
   | TokenUsageUpdate
+  // On-demand raw context response
+  | { type: "context_raw_response"; nodeId: string; executionId: string; messages: unknown[] }
   // Flow execution events
-  | FlowExecutionEvent;
+  | FlowExecutionEvent
+  // Flow tool requests from sidecar (AI agent creating/modifying flows)
+  | { type: "flow_tool_create"; requestId: string; flow: Record<string, unknown> }
+  | { type: "flow_tool_get"; requestId: string; flowId?: string; name?: string }
+  | { type: "flow_tool_list"; requestId: string }
+  | { type: "flow_tool_update"; requestId: string; flowId: string; patch: Record<string, unknown> }
+  | { type: "flow_tool_delete"; requestId: string; flowId: string };
 
 /** Flow execution events from sidecar */
 export type FlowExecutionEvent =

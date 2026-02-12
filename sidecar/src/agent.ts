@@ -1,9 +1,11 @@
 import { WebSocket } from "ws";
 import { query, type Options, type SDKMessage, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
-import { executeFlow, cancelExecution, resolveHumanReview } from "./flow-engine.js";
+import { executeFlow, cancelExecution, resolveHumanReview, getRawMessages } from "./flow-engine.js";
 import type { FlowDefinition } from "./flow-types.js";
 import { mcpManager } from "./mcp-manager.js";
 import { ContextAgentManager } from "./context-agent.js";
+import { countTokenBreakdown, resetTokenCounterClient } from "./token-counter.js";
+import { flowToolsServer, setFlowToolsWs, handleFlowToolResponse } from "./flow-tools.js";
 
 // Initialize MCP manager (server configs will be provided by the frontend)
 console.log(`[agent] MCP manager ready (${mcpManager.listServers().length} servers)`);
@@ -75,6 +77,20 @@ interface ResolveReviewMessage {
   approved: boolean;
 }
 
+interface GetContextRawMessage {
+  type: "get_context_raw";
+  executionId: string;
+  nodeId: string;
+}
+
+interface FlowToolResponseMessage {
+  type: "flow_tool_response";
+  requestId: string;
+  success: boolean;
+  data?: unknown;
+  error?: string;
+}
+
 type IncomingMessage =
   | UserMessage
   | SetApiKeyMessage
@@ -83,7 +99,9 @@ type IncomingMessage =
   | PingMessage
   | ExecuteFlowMessage
   | CancelFlowMessage
-  | ResolveReviewMessage;
+  | ResolveReviewMessage
+  | GetContextRawMessage
+  | FlowToolResponseMessage;
 
 function send(ws: WebSocket, data: unknown): void {
   if (ws.readyState === WebSocket.OPEN) {
@@ -100,10 +118,21 @@ const sdkSessionMap = new Map<string, string>();
 // Context Agent manager — one agent per session, used for flow execution
 const contextManager = new ContextAgentManager();
 
+// Cumulative stats for chat-mode context view
+interface ChatCumulativeStats {
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCost: number;
+}
+const chatSessionStats = new Map<string, ChatCumulativeStats>();
+
 export async function handleMessage(
   ws: WebSocket,
   message: IncomingMessage
 ): Promise<void> {
+  // Keep flow tools' WebSocket reference current
+  setFlowToolsWs(ws);
+
   switch (message.type) {
     case "ping":
       send(ws, { type: "pong" });
@@ -156,6 +185,26 @@ export async function handleMessage(
 
     case "resolve_review":
       resolveHumanReview(message.nodeId, message.approved);
+      break;
+
+    case "get_context_raw": {
+      const raw = getRawMessages(message.executionId, message.nodeId);
+      send(ws, {
+        type: "context_raw_response",
+        nodeId: message.nodeId,
+        executionId: message.executionId,
+        messages: raw ?? [],
+      });
+      break;
+    }
+
+    case "flow_tool_response":
+      // Route response from frontend back to the pending flow tool request
+      handleFlowToolResponse(message.requestId, {
+        success: message.success,
+        data: message.data,
+        error: message.error,
+      });
       break;
   }
 }
@@ -217,7 +266,9 @@ async function handleUserMessage(
 
 When the user says "this app", "the project", "this codebase", or similar, they are referring to THEIR project at that path — not the IDE application itself.
 
-Focus exclusively on the user's project. Use your tools to explore and understand it before answering questions about it.`
+Focus exclusively on the user's project. Use your tools to explore and understand it before answering questions about it.
+
+You also have flow management tools available. When the user asks you to create, modify, delete, list, or describe a flow, workflow, or pipeline, use the flow management tools (mcp__flow-tools__create_flow, mcp__flow-tools__update_flow, mcp__flow-tools__delete_flow, mcp__flow-tools__list_flows, mcp__flow-tools__get_flow). Flows are visual agent graphs with nodes and edges.`
       : undefined;
 
     const options: Options = {
@@ -226,6 +277,8 @@ Focus exclusively on the user's project. Use your tools to explore and understan
       allowDangerouslySkipPermissions: true,
       // Enable all SDK tools for direct chat when a project is open
       tools: { type: "preset" as const, preset: "claude_code" as const },
+      // Flow management tools via MCP server
+      mcpServers: { "flow-tools": flowToolsServer },
       // Set working directory to the user's project
       ...(globalProjectRoot ? { cwd: globalProjectRoot } : {}),
       // System prompt scopes the AI to the loaded project (not the IDE)
@@ -283,7 +336,7 @@ Focus exclusively on the user's project. Use your tools to explore and understan
           message: { role: "user", content: contentBlocks },
           parent_tool_use_id: null,
           session_id: "",
-        } as SDKUserMessage;
+        } as unknown as SDKUserMessage;
       }
       prompt = messageGenerator();
     } else {
@@ -292,6 +345,12 @@ Focus exclusively on the user's project. Use your tools to explore and understan
 
     // Track tool calls, turns, and emit debug info
     const tracker = createQueryTracker();
+    tracker.systemPrompt = projectSystemPrompt ?? "";
+    tracker.effectivePrompt = typeof prompt === "string" ? prompt : effectiveContent;
+    tracker.chatSessionId = sessionId;
+
+    // Reset token counter client in case API key changed
+    resetTokenCounterClient();
 
     emitDebugLog(ws, "agent", `Starting query | messageId=${messageId} | cwd=${globalProjectRoot ?? "(none)"} | resuming=${!!sdkSid}`);
     console.log(`[agent] Starting query | cwd=${globalProjectRoot} | resuming=${!!sdkSid}`);
@@ -362,6 +421,12 @@ interface QueryTracker {
   toolStartTimes: Map<string, number>;
   emittedToolIds: Set<string>;
   turnCount: number;
+  /** System prompt text for context view token breakdown */
+  systemPrompt?: string;
+  /** Effective prompt sent (with history prepend) */
+  effectivePrompt?: string;
+  /** Frontend session ID for context view events */
+  chatSessionId?: string;
 }
 
 function createQueryTracker(): QueryTracker {
@@ -421,7 +486,7 @@ function handleSDKEvent(ws: WebSocket, messageId: string, event: SDKMessage, fro
 
   switch (event.type) {
     case "stream_event": {
-      const streamEvent = event.event as Record<string, unknown>;
+      const streamEvent = event.event as unknown as Record<string, unknown>;
       const streamType = streamEvent.type as string;
 
       // Detect tool_use blocks from content_block_start (earliest detection point)
@@ -502,7 +567,7 @@ function handleSDKEvent(ws: WebSocket, messageId: string, event: SDKMessage, fro
         let isError = false;
 
         // Strategy 1: Extract from message.content (Anthropic API format)
-        const msgContent = (event.message as Record<string, unknown>)?.content;
+        const msgContent = (event.message as unknown as Record<string, unknown>)?.content;
         if (Array.isArray(msgContent)) {
           for (const block of msgContent) {
             const b = block as Record<string, unknown>;
@@ -564,15 +629,26 @@ function handleSDKEvent(ws: WebSocket, messageId: string, event: SDKMessage, fro
         sdkSessionMap.set(frontendSessionId, resultSessionId);
       }
 
+      const resultInputTokens = event.usage?.input_tokens ?? 0;
+      const resultOutputTokens = event.usage?.output_tokens ?? 0;
+      const resultCost = event.total_cost_usd ?? 0;
+
       // Send assistant_text_done for both success and error results
       send(ws, {
         type: "assistant_text_done",
         messageId,
         model: "sonnet",
-        tokensIn: event.usage?.input_tokens ?? 0,
-        tokensOut: event.usage?.output_tokens ?? 0,
-        costUsd: event.total_cost_usd ?? 0,
+        tokensIn: resultInputTokens,
+        tokensOut: resultOutputTokens,
+        costUsd: resultCost,
       });
+
+      // ── Emit context view events for chat mode (async, fire-and-forget) ──
+      if (tracker?.chatSessionId) {
+        emitChatContextEvents(ws, tracker, resultInputTokens, resultOutputTokens, resultCost, event.usage as Record<string, unknown> | undefined).catch((err) => {
+          console.warn("[agent] Context event emission error:", err);
+        });
+      }
 
       if (event.subtype !== "success") {
         // Also show error message in chat
@@ -604,4 +680,107 @@ function handleSDKEvent(ws: WebSocket, messageId: string, event: SDKMessage, fro
       console.log(`[sdk] UNHANDLED: ${label}`);
       break;
   }
+}
+
+/**
+ * Async helper to emit context_window_snapshot and token_usage_update
+ * events for chat mode. Called fire-and-forget from the sync handleSDKEvent.
+ */
+async function emitChatContextEvents(
+  ws: WebSocket,
+  tracker: QueryTracker,
+  inputTokens: number,
+  outputTokens: number,
+  cost: number,
+  usage: Record<string, unknown> | undefined,
+): Promise<void> {
+  const sessionId = tracker.chatSessionId!;
+  const nodeId = "chat";
+  const nodeLabel = "Chat";
+  const model = "sonnet";
+
+  // Update cumulative session stats
+  let cumulative = chatSessionStats.get(sessionId);
+  if (!cumulative) {
+    cumulative = { totalInputTokens: 0, totalOutputTokens: 0, totalCost: 0 };
+    chatSessionStats.set(sessionId, cumulative);
+  }
+  cumulative.totalInputTokens += inputTokens;
+  cumulative.totalOutputTokens += outputTokens;
+  cumulative.totalCost += cost;
+
+  // Build segments for token breakdown
+  const segments: Array<{ key: string; text: string }> = [];
+  if (tracker.systemPrompt) segments.push({ key: "systemPrompt", text: tracker.systemPrompt });
+  if (tracker.effectivePrompt) segments.push({ key: "userPrompt", text: tracker.effectivePrompt });
+
+  let breakdown: Record<string, number>;
+  let estimatedTotal: number;
+  try {
+    breakdown = await countTokenBreakdown(model, segments);
+    estimatedTotal = Object.values(breakdown).reduce((a, b) => a + b, 0);
+  } catch {
+    // Fallback to char estimates
+    breakdown = {};
+    for (const seg of segments) breakdown[seg.key] = Math.ceil(seg.text.length / 4);
+    estimatedTotal = Object.values(breakdown).reduce((a, b) => a + b, 0);
+  }
+
+  // Infer tool definition tokens
+  const toolDefTokens = Math.max(0, inputTokens - estimatedTotal);
+
+  const maxTokens = 200_000;
+  const percentFull = maxTokens > 0 ? (inputTokens / maxTokens) * 100 : 0;
+
+  // Build sections array
+  const sections: Array<{ name: string; tokenCount: number; summary: string; category: string }> = [];
+  if (breakdown.systemPrompt) sections.push({ name: "System Prompt", tokenCount: breakdown.systemPrompt, summary: (tracker.systemPrompt ?? "").slice(0, 80), category: "system" });
+  if (breakdown.userPrompt) sections.push({ name: "User Prompt", tokenCount: breakdown.userPrompt, summary: (tracker.effectivePrompt ?? "").slice(0, 80), category: "conversation" });
+  if (toolDefTokens > 0) sections.push({ name: "Tool Definitions", tokenCount: toolDefTokens, summary: "Inferred from actual usage vs breakdown", category: "tools" });
+
+  const cacheCreation = usage?.cache_creation_input_tokens as number | undefined;
+  const cacheRead = usage?.cache_read_input_tokens as number | undefined;
+
+  // Emit context window snapshot
+  send(ws, {
+    type: "context_window_snapshot",
+    sessionId,
+    executionId: sessionId,
+    nodeId,
+    nodeLabel,
+    model,
+    maxTokens,
+    timestamp: Date.now(),
+    breakdown: {
+      systemPrompt: breakdown.systemPrompt ?? 0,
+      briefing: 0,
+      toolDefinitions: toolDefTokens,
+      conversationHistory: breakdown.userPrompt ?? 0,
+      toolResults: 0,
+      fileContents: 0,
+      other: 0,
+    },
+    totalInputTokens: inputTokens,
+    percentFull,
+    sections,
+  });
+
+  // Emit token usage update with estimated vs actual delta
+  const delta = inputTokens - estimatedTotal;
+  send(ws, {
+    type: "token_usage_update",
+    sessionId,
+    executionId: sessionId,
+    nodeId,
+    timestamp: Date.now(),
+    actual: {
+      inputTokens,
+      outputTokens,
+      ...(cacheCreation != null ? { cacheCreationInputTokens: cacheCreation } : {}),
+      ...(cacheRead != null ? { cacheReadInputTokens: cacheRead } : {}),
+    },
+    estimated: estimatedTotal,
+    delta,
+    cumulativeSession: { ...cumulative },
+  });
 }

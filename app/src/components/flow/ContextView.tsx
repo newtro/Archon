@@ -24,9 +24,11 @@ const CATEGORY_COLORS: Record<string, string> = {
 
 interface ContextViewProps {
   state: ContextViewState;
+  onRequestRaw?: (executionId: string, nodeId: string) => void;
+  getRawMessages?: (executionId: string, nodeId: string) => unknown[] | null;
 }
 
-export function ContextView({ state }: ContextViewProps) {
+export function ContextView({ state, onRequestRaw, getRawMessages }: ContextViewProps) {
   const { latestSnapshot, snapshots, briefingDiffs, tokenUsageUpdates, classifications, contextState, cumulativeStats, budgetWarning } = state;
 
   const hasData = latestSnapshot || classifications.length > 0 || contextState;
@@ -71,6 +73,8 @@ export function ContextView({ state }: ContextViewProps) {
             briefingDiffs={briefingDiffs}
             classifications={classifications}
             tokenUsageUpdates={tokenUsageUpdates}
+            onRequestRaw={onRequestRaw}
+            getRawMessages={getRawMessages}
           />
         </div>
       )}
@@ -262,6 +266,8 @@ interface NodeContextHistoryProps {
   briefingDiffs: BriefingDiff[];
   classifications: ContextClassification[];
   tokenUsageUpdates: TokenUsageUpdate[];
+  onRequestRaw?: (executionId: string, nodeId: string) => void;
+  getRawMessages?: (executionId: string, nodeId: string) => unknown[] | null;
 }
 
 /** Merge all context events into a unified timeline sorted by timestamp */
@@ -271,7 +277,7 @@ type TimelineEntry =
   | { kind: "classification"; ts: number; data: ContextClassification }
   | { kind: "usage"; ts: number; data: TokenUsageUpdate };
 
-function NodeContextHistory({ snapshots, briefingDiffs, classifications, tokenUsageUpdates }: NodeContextHistoryProps) {
+function NodeContextHistory({ snapshots, briefingDiffs, classifications, tokenUsageUpdates, onRequestRaw, getRawMessages }: NodeContextHistoryProps) {
   const timeline: TimelineEntry[] = [
     ...snapshots.map((s) => ({ kind: "snapshot" as const, ts: s.timestamp, data: s })),
     ...briefingDiffs.map((b) => ({ kind: "briefing" as const, ts: b.timestamp, data: b })),
@@ -286,15 +292,16 @@ function NodeContextHistory({ snapshots, briefingDiffs, classifications, tokenUs
       <div className="context-history-label">Context Events</div>
       <div className="context-history-list">
         {timeline.map((entry, i) => (
-          <TimelineCard key={`${entry.kind}-${i}`} entry={entry} />
+          <TimelineCard key={`${entry.kind}-${i}`} entry={entry} onRequestRaw={onRequestRaw} getRawMessages={getRawMessages} />
         ))}
       </div>
     </div>
   );
 }
 
-function TimelineCard({ entry }: { entry: TimelineEntry }) {
+function TimelineCard({ entry, onRequestRaw, getRawMessages }: { entry: TimelineEntry; onRequestRaw?: (executionId: string, nodeId: string) => void; getRawMessages?: (executionId: string, nodeId: string) => unknown[] | null }) {
   const [expanded, setExpanded] = useState(false);
+  const [showRaw, setShowRaw] = useState(false);
 
   switch (entry.kind) {
     case "classification":
@@ -315,7 +322,18 @@ function TimelineCard({ entry }: { entry: TimelineEntry }) {
         </div>
       );
 
-    case "snapshot":
+    case "snapshot": {
+      const executionId = entry.data.executionId ?? entry.data.sessionId;
+      const rawMessages = getRawMessages?.(executionId, entry.data.nodeId) ?? null;
+
+      const handleToggleRaw = (e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (!showRaw && !rawMessages && onRequestRaw) {
+          onRequestRaw(executionId, entry.data.nodeId);
+        }
+        setShowRaw(!showRaw);
+      };
+
       return (
         <div className="context-event-card snapshot" onClick={() => setExpanded(!expanded)}>
           <div className="context-event-header">
@@ -338,13 +356,40 @@ function TimelineCard({ entry }: { entry: TimelineEntry }) {
           </div>
           {expanded && (
             <div className="context-snapshot-detail">
-              {entry.data.sections.map((section, idx) => (
-                <SectionRow key={idx} section={section} total={entry.data.totalInputTokens} />
-              ))}
+              {/* Structured / Raw toggle */}
+              <div className="context-snapshot-toggle" onClick={(e) => e.stopPropagation()}>
+                <button
+                  className={`context-toggle-btn ${!showRaw ? "active" : ""}`}
+                  onClick={(e) => { e.stopPropagation(); setShowRaw(false); }}
+                >
+                  Structured
+                </button>
+                <button
+                  className={`context-toggle-btn ${showRaw ? "active" : ""}`}
+                  onClick={handleToggleRaw}
+                >
+                  Raw
+                </button>
+              </div>
+
+              {showRaw ? (
+                <div className="context-snapshot-raw">
+                  {rawMessages ? (
+                    <JsonTree data={rawMessages} depth={0} />
+                  ) : (
+                    <span className="context-snapshot-raw-loading">Loading raw messages...</span>
+                  )}
+                </div>
+              ) : (
+                entry.data.sections.map((section, idx) => (
+                  <SectionRow key={idx} section={section} total={entry.data.totalInputTokens} />
+                ))
+              )}
             </div>
           )}
         </div>
       );
+    }
 
     case "briefing":
       return (

@@ -6,7 +6,7 @@
 export type NodeKind =
   | "llm" | "intent" | "evaluator"
   | "tool" | "transformer"
-  | "router" | "parallel" | "human-review" | "sub-flow"
+  | "router" | "parallel" | "join" | "human-review" | "sub-flow"
   | "memory" | "handoff" | "project-context"
   | "start" | "end";
 
@@ -103,3 +103,19 @@ export type FlowExecutionEvent =
   | { type: "flow_completed"; executionId: string; result: string; state: FlowState }
   | { type: "flow_error"; executionId: string; error: string }
   | { type: "human_review_requested"; executionId: string; nodeId: string; prompt: string };
+
+/** Patch model for updating flows via AI tools */
+export interface FlowPatch {
+  name?: string;
+  description?: string;
+  addNodes?: SerializedNode[];
+  updateNodes?: Array<{
+    id: string;
+    label?: string;
+    config?: { kind: NodeKind; config: Record<string, unknown> };
+  }>;
+  removeNodeIds?: string[];
+  addEdges?: SerializedEdge[];
+  removeEdgeIds?: string[];
+  contextAgentConfig?: FlowDefinition["contextAgentConfig"];
+}
