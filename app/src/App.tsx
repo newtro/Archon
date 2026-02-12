@@ -266,6 +266,12 @@ function App() {
           directSend({ type: "set_api_key", key });
         }
       });
+      // Send persisted OpenRouter key
+      getSetting<string>("openrouterApiKey", "").then((key) => {
+        if (key) {
+          directSend({ type: "set_openrouter_key", key });
+        }
+      });
       // Send project root immediately on connect (don't wait for useEffect)
       if (lastProjectRootRef.current) {
         directSend({ type: "set_project_root", path: lastProjectRootRef.current });
@@ -363,6 +369,13 @@ function App() {
   const handleApiKeyChange = useCallback(
     (key: string) => {
       send({ type: "set_api_key", key });
+    },
+    [send],
+  );
+
+  const handleOpenRouterKeyChange = useCallback(
+    (key: string) => {
+      send({ type: "set_openrouter_key", key });
     },
     [send],
   );
@@ -678,7 +691,7 @@ function App() {
         return <FlowRegistryPanel />;
 
       case "settings":
-        return <SettingsPanel onApiKeyChange={handleApiKeyChange} onModelChange={handleModelChange} />;
+        return <SettingsPanel onApiKeyChange={handleApiKeyChange} onOpenRouterKeyChange={handleOpenRouterKeyChange} onModelChange={handleModelChange} />;
     }
   };
 

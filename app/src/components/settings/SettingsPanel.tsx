@@ -7,10 +7,11 @@ import "./SettingsPanel.css";
 
 interface SettingsPanelProps {
   onApiKeyChange: (key: string) => void;
+  onOpenRouterKeyChange: (key: string) => void;
   onModelChange?: (model: string) => void;
 }
 
-export function SettingsPanel({ onApiKeyChange, onModelChange }: SettingsPanelProps) {
+export function SettingsPanel({ onApiKeyChange, onOpenRouterKeyChange, onModelChange }: SettingsPanelProps) {
   const [apiKey, setApiKey] = useState("");
   const [isMasked, setIsMasked] = useState(true);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
@@ -21,6 +22,10 @@ export function SettingsPanel({ onApiKeyChange, onModelChange }: SettingsPanelPr
   const [githubSaveStatus, setGithubSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
   const [repoOwner, setRepoOwner] = useState("newtro");
   const [repoName, setRepoName] = useState("Archon-Community");
+  // OpenRouter
+  const [openrouterKey, setOpenrouterKey] = useState("");
+  const [orMasked, setOrMasked] = useState(true);
+  const [orSaveStatus, setOrSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
 
   useEffect(() => {
     async function loadSettings() {
@@ -30,9 +35,14 @@ export function SettingsPanel({ onApiKeyChange, onModelChange }: SettingsPanelPr
       const storedGithubToken = await getSetting<string>("githubToken", "");
       const storedRepoOwner = await getSetting<string>("communityRepoOwner", "newtro");
       const storedRepoName = await getSetting<string>("communityRepoName", "Archon-Community");
+      const storedOrKey = await getSetting<string>("openrouterApiKey", "");
       if (storedKey) {
         setApiKey(storedKey);
         onApiKeyChange(storedKey);
+      }
+      if (storedOrKey) {
+        setOpenrouterKey(storedOrKey);
+        onOpenRouterKeyChange(storedOrKey);
       }
       setModel(storedModel);
       setAutoProjectContext(storedAutoContext);
@@ -49,6 +59,14 @@ export function SettingsPanel({ onApiKeyChange, onModelChange }: SettingsPanelPr
     onApiKeyChange(apiKey);
     setSaveStatus("saved");
     setTimeout(() => setSaveStatus("idle"), 2000);
+  };
+
+  const handleSaveOpenRouterKey = async () => {
+    setOrSaveStatus("saving");
+    await setSetting("openrouterApiKey", openrouterKey);
+    onOpenRouterKeyChange(openrouterKey);
+    setOrSaveStatus("saved");
+    setTimeout(() => setOrSaveStatus("idle"), 2000);
   };
 
   const handleModelChange = async (newModel: string) => {
@@ -75,6 +93,10 @@ export function SettingsPanel({ onApiKeyChange, onModelChange }: SettingsPanelPr
 
   const maskedKey = apiKey
     ? apiKey.slice(0, 7) + "..." + apiKey.slice(-4)
+    : "";
+
+  const maskedOrKey = openrouterKey
+    ? openrouterKey.slice(0, 7) + "..." + openrouterKey.slice(-4)
     : "";
 
   return (
@@ -127,6 +149,60 @@ export function SettingsPanel({ onApiKeyChange, onModelChange }: SettingsPanelPr
               {saveStatus === "saving"
                 ? "Saving..."
                 : saveStatus === "saved"
+                  ? "Saved"
+                  : "Save Key"}
+            </button>
+          </div>
+        </section>
+
+        <section className="settings-section">
+          <h3 className="settings-section-title">
+            <KeyRound size={16} />
+            OpenRouter API Key
+          </h3>
+          <p className="settings-description">
+            Enter your OpenRouter API key to use non-Claude models in flow LLM nodes.
+            Get a key at{" "}
+            <button
+              className="settings-link"
+              onClick={() => shellOpen("https://openrouter.ai/keys")}
+            >
+              openrouter.ai/keys <ExternalLink size={10} />
+            </button>
+          </p>
+          <div className="settings-field">
+            <div className="api-key-input-group">
+              <input
+                type={orMasked ? "password" : "text"}
+                className="settings-input"
+                placeholder="sk-or-..."
+                value={orMasked ? maskedOrKey : openrouterKey}
+                onChange={(e) => {
+                  if (!orMasked) {
+                    setOpenrouterKey(e.target.value);
+                    setOrSaveStatus("idle");
+                  }
+                }}
+                onFocus={() => {
+                  if (orMasked) setOrMasked(false);
+                }}
+              />
+              <button
+                className="settings-btn-icon"
+                onClick={() => setOrMasked(!orMasked)}
+                title={orMasked ? "Show key" : "Hide key"}
+              >
+                {orMasked ? <Eye size={16} /> : <EyeOff size={16} />}
+              </button>
+            </div>
+            <button
+              className="settings-btn-primary"
+              onClick={handleSaveOpenRouterKey}
+              disabled={!openrouterKey || orSaveStatus === "saving"}
+            >
+              {orSaveStatus === "saving"
+                ? "Saving..."
+                : orSaveStatus === "saved"
                   ? "Saved"
                   : "Save Key"}
             </button>

@@ -162,6 +162,7 @@ export type WSMessageToSidecar =
   | { type: "user_message"; content: string; images?: ImageAttachment[]; history?: HistoryMessage[]; sessionId?: string }
   | { type: "cancel" }
   | { type: "set_api_key"; key: string }
+  | { type: "set_openrouter_key"; key: string }
   | { type: "set_project_root"; path: string }
   | { type: "ping" }
   | { type: "execute_flow"; flow: unknown; input: string; history?: HistoryMessage[]; sessionId?: string }

@@ -12,6 +12,8 @@
     "@anthropic-ai/claude-agent-sdk": "^0.2.39",
     "@anthropic-ai/sdk": "^0.74.0",
     "chokidar": "^5.0.0",
+    "glob": "^11.1.0",
+    "openai": "^4.104.0",
     "simple-git": "^3.30.0",
     "ws": "^8.18.0",
     "zod": "^4.3.6"

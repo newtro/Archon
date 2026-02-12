@@ -10,7 +10,8 @@ import type {
   ToolPreset,
   HistoryMessage,
 } from "./flow-types.js";
-import { getGlobalProjectRoot } from "./agent.js";
+import { getGlobalProjectRoot, getOpenRouterApiKey } from "./agent.js";
+import { runOpenRouterAgent } from "./openrouter-runner.js";
 import { loadProjectContext } from "./context-loader.js";
 import type { ContextAgent } from "./context-agent.js";
 import { countTokenBreakdown, resetTokenCounterClient } from "./token-counter.js";
@@ -365,6 +366,16 @@ Use your tools (Read, Glob, Grep, etc.) to explore and understand this project. 
     prompt = `<conversation_history>\n${turns}\n</conversation_history>\n\n${input}`;
   }
 
+  // ── Provider branch: OpenRouter models get their own execution path ──
+  const provider = (cfg.provider as string) ?? "claude";
+  if (provider === "openrouter") {
+    return await executeOpenRouterLLMNode(
+      ws, node, cfg, prompt, fullSystemPrompt, toolPreset,
+      executionId, abortController, contextAgent,
+    );
+  }
+
+  // ── Claude Agent SDK path (unchanged) ──────────────────────────
   const hasProjectRoot = !!getGlobalProjectRoot();
   const options: Options = {
     model: model as "haiku" | "sonnet" | "opus",
@@ -633,6 +644,122 @@ Use your tools (Read, Glob, Grep, etc.) to explore and understand this project. 
     signal: "success",
     data: { model, costUsd: totalCost },
     durationMs: 0,
+  };
+}
+
+// ── OpenRouter LLM Node Execution ────────────────────────────────
+
+async function executeOpenRouterLLMNode(
+  ws: WebSocket,
+  node: SerializedNode,
+  cfg: Record<string, unknown>,
+  prompt: string,
+  systemPrompt: string,
+  toolPreset: ToolPreset | undefined,
+  executionId: string,
+  abortController: AbortController,
+  contextAgent?: import("./context-agent.js").ContextAgent,
+): Promise<NodeOutput> {
+  const openrouterKey = getOpenRouterApiKey();
+  if (!openrouterKey) {
+    throw new Error("OpenRouter API key not configured. Set it in Settings.");
+  }
+
+  const orModel = cfg.openrouterModel as string;
+  if (!orModel) {
+    throw new Error(
+      "No OpenRouter model selected. Configure the model in the LLM node.",
+    );
+  }
+
+  let result = "";
+  const startTime = Date.now();
+
+  const { result: finalResult, totalCost } = await runOpenRouterAgent(
+    prompt,
+    {
+      apiKey: openrouterKey,
+      model: orModel,
+      systemPrompt,
+      toolPreset: toolPreset ?? "read-only",
+      temperature: (cfg.temperature as number) ?? 0.7,
+      maxTokens: (cfg.maxTokens as number) ?? 4096,
+      cwd: resolveNodeCwd(cfg),
+      abortSignal: abortController.signal,
+    },
+    {
+      onTextDelta: (text) => {
+        result += text;
+        emitEvent(ws, {
+          type: "node_streaming",
+          executionId,
+          nodeId: node.id,
+          delta: text,
+        });
+      },
+      onToolCallStart: (id, name, args) => {
+        emitEvent(ws, {
+          type: "node_tool_call",
+          executionId,
+          nodeId: node.id,
+          toolCall: {
+            id,
+            name,
+            args,
+            status: "loading" as const,
+            startedAt: Date.now(),
+          },
+        });
+        console.log(`[flow-engine:openrouter] TOOL_START: ${name} (${id})`);
+      },
+      onToolCallDone: (id, toolResult, isError, durationMs) => {
+        emitEvent(ws, {
+          type: "node_tool_result",
+          executionId,
+          nodeId: node.id,
+          toolCallId: id,
+          result: toolResult,
+          status: isError ? ("error" as const) : ("success" as const),
+          durationMs,
+        });
+        console.log(
+          `[flow-engine:openrouter] TOOL_DONE: ${id} ${isError ? "ERROR" : "OK"} (${durationMs}ms)`,
+        );
+      },
+    },
+  );
+
+  result = finalResult;
+  const durationMs = Date.now() - startTime;
+
+  // Update cumulative execution stats
+  const cumulative = executionStats.get(executionId);
+  if (cumulative) {
+    cumulative.totalCost += totalCost;
+  }
+
+  // Context Agent: ingest result (model-agnostic)
+  if (contextAgent) {
+    try {
+      await contextAgent.ingestResult(
+        result,
+        [],
+        orModel,
+        ws,
+        abortController,
+      );
+    } catch (err) {
+      console.warn("[flow-engine:openrouter] Context Agent ingestion error:", err);
+    }
+  }
+
+  return {
+    nodeId: node.id,
+    kind: "llm",
+    result,
+    signal: "success",
+    data: { model: orModel, provider: "openrouter", costUsd: totalCost },
+    durationMs,
   };
 }
 

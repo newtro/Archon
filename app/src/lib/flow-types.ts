@@ -246,7 +246,9 @@ export const TOOL_PRESET_DESCRIPTIONS: Record<ToolPreset, string> = {
   "full-access": "All SDK tools: Read, Write, Edit, Bash, Glob, Grep, WebSearch, etc.",
 };
 
-// ── Model Metadata ──────────────────────────────────────────────
+// ── Provider & Model Metadata ────────────────────────────────────
+
+export type LLMProvider = "claude" | "openrouter";
 
 export type ModelId = "haiku" | "sonnet" | "opus";
 
@@ -260,6 +262,8 @@ export const MODEL_INFO: Record<ModelId, { label: string; apiId: string; maxOutp
 
 export interface LLMNodeConfig {
   model: ModelId;
+  provider?: LLMProvider;          // "claude" (default) or "openrouter"
+  openrouterModel?: string;        // OpenRouter model ID, e.g. "minimax/minimax-m2.5"
   systemPrompt: string;
   temperature: number;
   maxTokens: number;
@@ -381,7 +385,7 @@ export type FlowNodeConfig =
 export function getDefaultConfig(kind: NodeKind): FlowNodeConfig {
   switch (kind) {
     case "llm":
-      return { kind, config: { model: "sonnet", systemPrompt: "", temperature: 0.7, maxTokens: 4096, tools: [], enableThinking: true, toolPreset: "read-only" as ToolPreset } };
+      return { kind, config: { model: "sonnet", provider: "claude" as LLMProvider, systemPrompt: "", temperature: 0.7, maxTokens: 4096, tools: [], enableThinking: true, toolPreset: "read-only" as ToolPreset } };
     case "intent":
       return { kind, config: { classifications: [
         { name: "feature", instructions: "User wants a new feature or capability added" },

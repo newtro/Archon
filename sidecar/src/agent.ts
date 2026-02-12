@@ -13,6 +13,11 @@ console.log(`[agent] MCP manager ready (${mcpManager.listServers().length} serve
 
 // In-memory API key storage (will be replaced with secure storage)
 let apiKey: string | null = null;
+let openrouterApiKey: string | null = null;
+
+export function getOpenRouterApiKey(): string | null {
+  return openrouterApiKey;
+}
 
 // Global project root — set when the user opens a folder in the file tree
 let globalProjectRoot: string | null = null;
@@ -43,6 +48,11 @@ interface UserMessage {
 
 interface SetApiKeyMessage {
   type: "set_api_key";
+  key: string;
+}
+
+interface SetOpenRouterKeyMessage {
+  type: "set_openrouter_key";
   key: string;
 }
 
@@ -127,6 +137,7 @@ type GitMessage =
 type IncomingMessage =
   | UserMessage
   | SetApiKeyMessage
+  | SetOpenRouterKeyMessage
   | SetProjectRootMessage
   | CancelMessage
   | PingMessage
@@ -176,6 +187,12 @@ export async function handleMessage(
       apiKey = message.key;
       send(ws, { type: "status", status: "api_key_set" });
       console.log("[agent] API key configured");
+      break;
+
+    case "set_openrouter_key":
+      openrouterApiKey = (message as SetOpenRouterKeyMessage).key;
+      send(ws, { type: "status", status: "openrouter_key_set" });
+      console.log("[agent] OpenRouter API key configured");
       break;
 
     case "set_project_root":
