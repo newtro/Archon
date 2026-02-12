@@ -294,7 +294,11 @@ async function executeLLMNode(
   const systemParts = [
     systemPrompt,
     contextOutput,
-    `You are working in the project directory: ${projectRoot}\nUse your tools (Read, Glob, Grep, etc.) to explore and understand this project. Do NOT rely on prior knowledge about other projects.`,
+    `You are an AI coding assistant embedded in an IDE. The user's project is located at: ${projectRoot}
+
+When the user says "this app", "the project", "this codebase", or similar, they are referring to THEIR project at that path — not the IDE application itself.
+
+Use your tools (Read, Glob, Grep, etc.) to explore and understand this project. Do NOT rely on prior knowledge about other projects.`,
   ].filter(Boolean);
   const fullSystemPrompt = systemParts.join("\n\n---\n\n");
 
@@ -335,6 +339,7 @@ async function executeLLMNode(
     prompt = `<conversation_history>\n${turns}\n</conversation_history>\n\n${input}`;
   }
 
+  const hasProjectRoot = !!getGlobalProjectRoot();
   const options: Options = {
     model: model as "haiku" | "sonnet" | "opus",
     cwd: resolveNodeCwd(cfg),
@@ -342,7 +347,8 @@ async function executeLLMNode(
     // Also auto-allow any extra MCP/custom tools specified on the node
     allowedTools: extraTools.length > 0 ? extraTools : [],
     systemPrompt: fullSystemPrompt || undefined,
-    settingSources: ["project"],
+    // Only load project settings when a real project root is set (avoids picking up IDE settings)
+    ...(hasProjectRoot ? { settingSources: ["project" as const] } : {}),
     permissionMode: "bypassPermissions",
     allowDangerouslySkipPermissions: true,
     includePartialMessages: true,
@@ -479,6 +485,59 @@ async function executeLLMNode(
       }
     } else if (event.type === "result") {
       totalCost = event.total_cost_usd ?? 0;
+      // Emit token usage update for context view
+      const usage = event.usage as { input_tokens?: number; output_tokens?: number } | undefined;
+      const inputTokens = usage?.input_tokens ?? 0;
+      const outputTokens = usage?.output_tokens ?? 0;
+      // Derive max context from model
+      const maxTokens = model === "opus" ? 200_000 : model === "sonnet" ? 200_000 : model === "haiku" ? 200_000 : 200_000;
+      const percentFull = maxTokens > 0 ? (inputTokens / maxTokens) * 100 : 0;
+
+      // Emit context window snapshot
+      send(ws, {
+        type: "context_window_snapshot",
+        sessionId: executionId,
+        executionId,
+        nodeId: node.id,
+        nodeLabel: node.label,
+        model,
+        maxTokens,
+        timestamp: Date.now(),
+        breakdown: {
+          systemPrompt: Math.round(fullSystemPrompt.length / 4), // rough estimate
+          briefing: contextAgent ? Math.round(prompt.length / 4) : 0,
+          toolDefinitions: 0, // not easily measurable without countTokens API
+          conversationHistory: !contextAgent && history ? Math.round(history.reduce((s, m) => s + m.content.length, 0) / 4) : 0,
+          toolResults: 0,
+          fileContents: contextOutput ? Math.round(contextOutput.length / 4) : 0,
+          other: 0,
+        },
+        totalInputTokens: inputTokens,
+        percentFull,
+        sections: [
+          { name: "System Prompt", tokenCount: Math.round(fullSystemPrompt.length / 4), summary: systemPrompt?.slice(0, 80) || "Default system prompt", category: "system" as const },
+          ...(contextAgent ? [{ name: "Briefing", tokenCount: Math.round(prompt.length / 4), summary: prompt.slice(0, 80), category: "briefing" as const }] : []),
+          ...(contextOutput ? [{ name: "Project Context", tokenCount: Math.round(contextOutput.length / 4), summary: `${contextOutput.length} chars of project context`, category: "files" as const }] : []),
+          ...(!contextAgent && history?.length ? [{ name: "Conversation History", tokenCount: Math.round(history.reduce((s, m) => s + m.content.length, 0) / 4), summary: `${history.length} messages`, category: "conversation" as const }] : []),
+        ],
+      });
+
+      // Emit token usage update
+      send(ws, {
+        type: "token_usage_update",
+        sessionId: executionId,
+        executionId,
+        nodeId: node.id,
+        timestamp: Date.now(),
+        actual: { inputTokens, outputTokens },
+        estimated: 0,
+        delta: 0,
+        cumulativeSession: {
+          totalInputTokens: inputTokens,
+          totalOutputTokens: outputTokens,
+          totalCost: totalCost,
+        },
+      });
     }
   }
 

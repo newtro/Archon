@@ -1,7 +1,20 @@
+import { useContext } from "react";
 import { Handle, Position, NodeResizer, type NodeProps } from "@xyflow/react";
 import { NODE_REGISTRY, type FlowNodeData, type NodeKind } from "../../../lib/flow-types";
 import type { NodeExecState } from "../../../hooks/useFlowExecution";
+import { ExecNodeStatesContext } from "../FlowExecutionDiagram";
 import "./BaseNode.css";
+
+/** Read per-node execution state from the diagram context (if mounted inside one). */
+function useExecState(nodeId: string) {
+  const nodeStates = useContext(ExecNodeStatesContext);
+  const info = nodeStates[nodeId];
+  return {
+    execState: info?.state as NodeExecState | undefined,
+    streamingText: info?.streamingText as string | undefined,
+    durationMs: info?.output?.durationMs as number | undefined,
+  };
+}
 
 interface BaseNodeProps {
   kind: NodeKind;
@@ -134,34 +147,28 @@ export function BaseNode({ kind, label, selected, children, subtitle, execState,
 
 // ── Typed node components for React Flow registration ────────────
 
-// Helper to extract exec props from FlowNodeData
-function execProps(d: FlowNodeData) {
-  return {
-    execState: d.execState as NodeExecState | undefined,
-    streamingText: d.streamingText as string | undefined,
-    durationMs: d.durationMs as number | undefined,
-  };
-}
-
-export function StartNode({ data, selected }: NodeProps) {
+export function StartNode({ id, data, selected }: NodeProps) {
   const d = data as unknown as FlowNodeData;
+  const exec = useExecState(id);
   return (
-    <BaseNode kind="start" label={d.label} selected={!!selected} {...execProps(d)} />
+    <BaseNode kind="start" label={d.label} selected={!!selected} {...exec} />
   );
 }
 
-export function EndNode({ data, selected }: NodeProps) {
+export function EndNode({ id, data, selected }: NodeProps) {
   const d = data as unknown as FlowNodeData;
+  const exec = useExecState(id);
   return (
-    <BaseNode kind="end" label={d.label} selected={!!selected} {...execProps(d)} />
+    <BaseNode kind="end" label={d.label} selected={!!selected} {...exec} />
   );
 }
 
-export function LLMNode({ data, selected }: NodeProps) {
+export function LLMNode({ id, data, selected }: NodeProps) {
   const d = data as unknown as FlowNodeData;
   const cfg = d.config.kind === "llm" ? d.config.config : null;
+  const exec = useExecState(id);
   return (
-    <BaseNode kind="llm" label={d.label} selected={!!selected} subtitle={cfg?.model} {...execProps(d)}>
+    <BaseNode kind="llm" label={d.label} selected={!!selected} subtitle={cfg?.model} {...exec}>
       {cfg?.systemPrompt && (
         <div className="flow-node-preview">{cfg.systemPrompt.slice(0, 80)}...</div>
       )}
@@ -169,10 +176,11 @@ export function LLMNode({ data, selected }: NodeProps) {
   );
 }
 
-export function IntentNode({ data, selected }: NodeProps) {
+export function IntentNode({ id, data, selected }: NodeProps) {
   const d = data as unknown as FlowNodeData;
   const cfg = d.config.kind === "intent" ? d.config.config : null;
   const classifications = cfg?.classifications ?? [];
+  const exec = useExecState(id);
 
   const intentHandles = classifications.length > 0 ? (
     <>
@@ -201,39 +209,43 @@ export function IntentNode({ data, selected }: NodeProps) {
   ) : null;
 
   return (
-    <BaseNode kind="intent" label={d.label} selected={!!selected} hideDefaultOutput outputHandles={intentHandles} {...execProps(d)} />
+    <BaseNode kind="intent" label={d.label} selected={!!selected} hideDefaultOutput outputHandles={intentHandles} {...exec} />
   );
 }
 
-export function EvaluatorNode({ data, selected }: NodeProps) {
+export function EvaluatorNode({ id, data, selected }: NodeProps) {
   const d = data as unknown as FlowNodeData;
   const cfg = d.config.kind === "evaluator" ? d.config.config : null;
+  const exec = useExecState(id);
   return (
-    <BaseNode kind="evaluator" label={d.label} selected={!!selected} subtitle={cfg ? `>= ${cfg.passThreshold}%` : undefined} {...execProps(d)} />
+    <BaseNode kind="evaluator" label={d.label} selected={!!selected} subtitle={cfg ? `>= ${cfg.passThreshold}%` : undefined} {...exec} />
   );
 }
 
-export function ToolNode({ data, selected }: NodeProps) {
+export function ToolNode({ id, data, selected }: NodeProps) {
   const d = data as unknown as FlowNodeData;
   const cfg = d.config.kind === "tool" ? d.config.config : null;
+  const exec = useExecState(id);
   return (
-    <BaseNode kind="tool" label={d.label} selected={!!selected} subtitle={cfg?.toolName || "Not configured"} {...execProps(d)} />
+    <BaseNode kind="tool" label={d.label} selected={!!selected} subtitle={cfg?.toolName || "Not configured"} {...exec} />
   );
 }
 
-export function TransformerNode({ data, selected }: NodeProps) {
+export function TransformerNode({ id, data, selected }: NodeProps) {
   const d = data as unknown as FlowNodeData;
+  const exec = useExecState(id);
   return (
-    <BaseNode kind="transformer" label={d.label} selected={!!selected} {...execProps(d)} />
+    <BaseNode kind="transformer" label={d.label} selected={!!selected} {...exec} />
   );
 }
 
-export function RouterNode({ data, selected }: NodeProps) {
+export function RouterNode({ id, data, selected }: NodeProps) {
   const d = data as unknown as FlowNodeData;
   const cfg = d.config.kind === "router" ? d.config.config : null;
   const rules = cfg?.rules ?? [];
   const isRulesMode = (cfg?.mode ?? "rules") === "rules";
   const llmOutputs = cfg?.llmOutputs ?? [];
+  const exec = useExecState(id);
 
   // Collect output labels: from rules in rules mode, from llmOutputs in LLM mode
   const outputLabels = isRulesMode
@@ -274,62 +286,69 @@ export function RouterNode({ data, selected }: NodeProps) {
       subtitle={cfg?.mode || "rules"}
       hideDefaultOutput={outputLabels.length > 0}
       outputHandles={routerHandles}
-      {...execProps(d)}
+      {...exec}
     />
   );
 }
 
-export function ParallelNode({ data, selected }: NodeProps) {
+export function ParallelNode({ id, data, selected }: NodeProps) {
   const d = data as unknown as FlowNodeData;
   const cfg = d.config.kind === "parallel" ? d.config.config : null;
+  const exec = useExecState(id);
   return (
-    <BaseNode kind="parallel" label={d.label} selected={!!selected} subtitle={cfg ? `${cfg.branches} branches` : undefined} {...execProps(d)} />
+    <BaseNode kind="parallel" label={d.label} selected={!!selected} subtitle={cfg ? `${cfg.branches} branches` : undefined} {...exec} />
   );
 }
 
-export function JoinNode({ data, selected }: NodeProps) {
+export function JoinNode({ id, data, selected }: NodeProps) {
   const d = data as unknown as FlowNodeData;
   const cfg = d.config.kind === "join" ? d.config.config : null;
   const subtitle = cfg?.mode === "count" ? `${cfg.requiredCount ?? 0} of N` : cfg?.mode ?? "all";
+  const exec = useExecState(id);
   return (
-    <BaseNode kind="join" label={d.label} selected={!!selected} subtitle={subtitle} {...execProps(d)} />
+    <BaseNode kind="join" label={d.label} selected={!!selected} subtitle={subtitle} {...exec} />
   );
 }
 
-export function HumanReviewNode({ data, selected }: NodeProps) {
+export function HumanReviewNode({ id, data, selected }: NodeProps) {
   const d = data as unknown as FlowNodeData;
+  const exec = useExecState(id);
   return (
-    <BaseNode kind="human-review" label={d.label} selected={!!selected} {...execProps(d)} />
+    <BaseNode kind="human-review" label={d.label} selected={!!selected} {...exec} />
   );
 }
 
-export function SubFlowNode({ data, selected }: NodeProps) {
+export function SubFlowNode({ id, data, selected }: NodeProps) {
   const d = data as unknown as FlowNodeData;
   const cfg = d.config.kind === "sub-flow" ? d.config.config : null;
+  const exec = useExecState(id);
   return (
-    <BaseNode kind="sub-flow" label={d.label} selected={!!selected} subtitle={cfg?.flowId || "Not linked"} {...execProps(d)} />
+    <BaseNode kind="sub-flow" label={d.label} selected={!!selected} subtitle={cfg?.flowId || "Not linked"} {...exec} />
   );
 }
 
-export function MemoryNode({ data, selected }: NodeProps) {
+export function MemoryNode({ id, data, selected }: NodeProps) {
   const d = data as unknown as FlowNodeData;
   const cfg = d.config.kind === "memory" ? d.config.config : null;
+  const exec = useExecState(id);
   return (
-    <BaseNode kind="memory" label={d.label} selected={!!selected} subtitle={cfg?.operation || "read"} {...execProps(d)} />
+    <BaseNode kind="memory" label={d.label} selected={!!selected} subtitle={cfg?.operation || "read"} {...exec} />
   );
 }
 
-export function HandoffNode({ data, selected }: NodeProps) {
+export function HandoffNode({ id, data, selected }: NodeProps) {
   const d = data as unknown as FlowNodeData;
+  const exec = useExecState(id);
   return (
-    <BaseNode kind="handoff" label={d.label} selected={!!selected} {...execProps(d)} />
+    <BaseNode kind="handoff" label={d.label} selected={!!selected} {...exec} />
   );
 }
 
-export function ProjectContextNode({ data, selected }: NodeProps) {
+export function ProjectContextNode({ id, data, selected }: NodeProps) {
   const d = data as unknown as FlowNodeData;
+  const exec = useExecState(id);
   return (
-    <BaseNode kind="project-context" label={d.label} selected={!!selected} {...execProps(d)} />
+    <BaseNode kind="project-context" label={d.label} selected={!!selected} {...exec} />
   );
 }
 

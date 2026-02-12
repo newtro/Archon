@@ -18,6 +18,7 @@ import { StartupPage } from "./components/startup/StartupPage";
 import { HumanReviewModal, type HumanReviewRequest } from "./components/flow/HumanReviewModal";
 import { useWebSocket } from "./hooks/useWebSocket";
 import { useFlowExecution } from "./hooks/useFlowExecution";
+import { useContextView } from "./hooks/useContextView";
 import { useSidecarHealth } from "./hooks/useSidecarHealth";
 import { useWorkspace } from "./contexts/WorkspaceContext";
 import { getSetting, setSetting } from "./lib/store";
@@ -129,6 +130,8 @@ function App() {
     (msg: WSMessageToSidecar) => sendRef.current(msg),
   );
 
+  const { contextViewState, handleContextViewEvent, handleClassification, handleContextStateUpdate } = useContextView();
+
   // Wrap handleFlowEvent to also map flow events into chat messages
   const handleFlowEventWithChat = useCallback((event: FlowExecutionEvent) => {
     handleFlowEvent(event);
@@ -219,6 +222,9 @@ function App() {
     onStatusChange: setIsConnected,
     onFlowEvent: handleFlowEventWithChat,
     onLogEntry: handleLogEntry,
+    onContextViewEvent: handleContextViewEvent,
+    onContextClassification: handleClassification,
+    onContextStateUpdate: handleContextStateUpdate,
     onConnect: (directSend) => {
       // Send persisted API key to sidecar immediately on WebSocket open
       getSetting<string>("apiKey", "").then((key) => {
@@ -487,6 +493,7 @@ function App() {
             logEntries={logEntries}
             onClearLogs={() => setLogEntries([])}
             previewFlow={previewFlow}
+            contextViewState={contextViewState}
           />
         </div>
       </div>

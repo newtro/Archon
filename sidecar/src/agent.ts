@@ -117,6 +117,9 @@ export async function handleMessage(
 
     case "set_project_root":
       globalProjectRoot = message.path;
+      // Change process CWD so the Agent SDK resolves project settings
+      // (CLAUDE.md, .claude/) from the user's project, not the sidecar directory
+      try { process.chdir(message.path); } catch { /* ignore if path doesn't exist yet */ }
       send(ws, { type: "status", status: "project_root_set" });
       console.log(`[agent] Project root set to: ${message.path}`);
       break;
@@ -208,6 +211,15 @@ async function handleUserMessage(
     // Check if we have a prior SDK session to resume (multi-turn context)
     const sdkSid = sessionId ? sdkSessionMap.get(sessionId) : undefined;
 
+    // Build a system prompt that clearly scopes the AI to the user's loaded project
+    const projectSystemPrompt = globalProjectRoot
+      ? `You are an AI coding assistant embedded in an IDE. The user has opened the project located at: ${globalProjectRoot}
+
+When the user says "this app", "the project", "this codebase", or similar, they are referring to THEIR project at that path — not the IDE application itself.
+
+Focus exclusively on the user's project. Use your tools to explore and understand it before answering questions about it.`
+      : undefined;
+
     const options: Options = {
       model: "sonnet",
       permissionMode: "bypassPermissions",
@@ -216,8 +228,10 @@ async function handleUserMessage(
       tools: { type: "preset" as const, preset: "claude_code" as const },
       // Set working directory to the user's project
       ...(globalProjectRoot ? { cwd: globalProjectRoot } : {}),
-      // Load CLAUDE.md and project settings if available
-      settingSources: ["project" as const],
+      // System prompt scopes the AI to the loaded project (not the IDE)
+      ...(projectSystemPrompt ? { systemPrompt: projectSystemPrompt } : {}),
+      // Load CLAUDE.md from the user's project if available
+      ...(globalProjectRoot ? { settingSources: ["project" as const] } : {}),
       // Enable streaming partial messages
       includePartialMessages: true,
       abortController: activeAbortController,

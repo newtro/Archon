@@ -335,7 +335,6 @@
   flex: 1;
   min-height: 0;
   position: relative;
-  overflow: hidden;
 }
 
 .flow-exec-diagram .react-flow {

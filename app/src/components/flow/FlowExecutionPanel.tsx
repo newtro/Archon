@@ -2,11 +2,12 @@ import { useState } from "react";
 import { NODE_REGISTRY, type NodeKind, type FlowDefinition } from "../../lib/flow-types";
 import { LogStreamPanel } from "../logs/LogStreamPanel";
 import type { FlowExecutionState, FlowNodeMeta, NodeExecInfo } from "../../hooks/useFlowExecution";
-import type { LogEntry } from "../../lib/types";
+import type { LogEntry, ContextViewState } from "../../lib/types";
 import { FlowExecutionDiagram } from "./FlowExecutionDiagram";
+import { ContextView } from "./ContextView";
 import "./FlowExecutionPanel.css";
 
-type ViewMode = "list" | "diagram" | "debug";
+type ViewMode = "list" | "diagram" | "debug" | "context";
 
 interface FlowExecutionPanelProps {
   execState: FlowExecutionState;
@@ -15,9 +16,10 @@ interface FlowExecutionPanelProps {
   logEntries: LogEntry[];
   onClearLogs: () => void;
   previewFlow?: FlowDefinition | null;
+  contextViewState?: ContextViewState;
 }
 
-export function FlowExecutionPanel({ execState, onCancel, onReset, logEntries, onClearLogs, previewFlow }: FlowExecutionPanelProps) {
+export function FlowExecutionPanel({ execState, onCancel, onReset, logEntries, onClearLogs, previewFlow, contextViewState }: FlowExecutionPanelProps) {
   const { status, nodeList, nodeStates, flow } = execState;
   // Use the executing flow if available, otherwise fall back to the selected preview flow
   const diagramFlow = flow ?? previewFlow ?? null;
@@ -26,25 +28,23 @@ export function FlowExecutionPanel({ execState, onCancel, onReset, logEntries, o
   const completedCount = nodeList.filter((n) => nodeStates[n.id]?.state === "completed").length;
   const isIdle = status === "idle";
 
+  const titleForMode = (): string => {
+    if (viewMode === "debug") return "Debug Log";
+    if (viewMode === "context") return "Context";
+    if (status === "running") return "Executing Flow";
+    if (status === "completed") return "Flow Complete";
+    if (status === "error") return "Flow Error";
+    if (diagramFlow) return diagramFlow.name;
+    return "Execution";
+  };
+
   return (
     <div className="flow-exec-panel">
       {/* Header */}
       <div className="flow-exec-header">
         <div className="flow-exec-header-left">
-          {!isIdle && <div className={`flow-exec-status-dot ${status}`} />}
-          <span className="flow-exec-title">
-            {viewMode === "debug"
-              ? "Debug Log"
-              : status === "running"
-                ? "Executing Flow"
-                : status === "completed"
-                  ? "Flow Complete"
-                  : status === "error"
-                    ? "Flow Error"
-                    : diagramFlow
-                      ? diagramFlow.name
-                      : "Execution"}
-          </span>
+          {!isIdle && viewMode !== "context" && <div className={`flow-exec-status-dot ${status}`} />}
+          <span className="flow-exec-title">{titleForMode()}</span>
         </div>
         <div className="flow-exec-header-actions">
           {/* View mode toggle */}
@@ -85,6 +85,16 @@ export function FlowExecutionPanel({ execState, onCancel, onReset, logEntries, o
                 <line x1="9" y1="16" x2="18" y2="16" />
               </svg>
             </button>
+            <button
+              className={`flow-exec-toggle-btn ${viewMode === "context" ? "active" : ""}`}
+              onClick={() => setViewMode("context")}
+              title="Context view"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 2a8.5 8.5 0 0 0-8.5 8.5c0 3.03 1.6 5.69 4 7.18V20a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1v-2.32c2.4-1.49 4-4.15 4-7.18A8.5 8.5 0 0 0 12 2Z" />
+                <line x1="10" y1="22" x2="14" y2="22" />
+              </svg>
+            </button>
           </div>
 
           {status === "running" && (
@@ -104,8 +114,21 @@ export function FlowExecutionPanel({ execState, onCancel, onReset, logEntries, o
         </div>
       </div>
 
-      {/* Content: list, diagram, or debug */}
-      {viewMode === "debug" ? (
+      {/* Content: list, diagram, debug, or context */}
+      {viewMode === "context" ? (
+        contextViewState ? (
+          <ContextView state={contextViewState} />
+        ) : (
+          <div className="flow-exec-empty">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" opacity="0.2">
+              <path d="M12 2a8.5 8.5 0 0 0-8.5 8.5c0 3.03 1.6 5.69 4 7.18V20a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1v-2.32c2.4-1.49 4-4.15 4-7.18A8.5 8.5 0 0 0 12 2Z" />
+              <line x1="10" y1="22" x2="14" y2="22" />
+            </svg>
+            <span>No context data</span>
+            <span className="flow-exec-empty-hint">Start a chat or run a flow to see context window state</span>
+          </div>
+        )
+      ) : viewMode === "debug" ? (
         <div className="flow-exec-debug-content">
           <LogStreamPanel logEntries={logEntries} onClear={onClearLogs} />
         </div>

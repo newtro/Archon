@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import type { WSMessageToSidecar, WSMessageFromSidecar, ChatMessage, FlowExecutionEvent, LogEntryEvent, LogEntry } from "../lib/types";
+import type { WSMessageToSidecar, WSMessageFromSidecar, ChatMessage, FlowExecutionEvent, LogEntryEvent, LogEntry, ContextViewEvent, ContextClassification } from "../lib/types";
 
 interface UseWebSocketOptions {
   onMessage: (msg: ChatMessage) => void;
@@ -7,6 +7,9 @@ interface UseWebSocketOptions {
   onFlowEvent?: (event: FlowExecutionEvent) => void;
   onConnect?: (send: (msg: WSMessageToSidecar) => void) => void;
   onLogEntry?: (entry: LogEntryEvent) => void;
+  onContextViewEvent?: (event: ContextViewEvent) => void;
+  onContextClassification?: (classification: ContextClassification) => void;
+  onContextStateUpdate?: (state: unknown) => void;
 }
 
 const SIDECAR_PORT = 9399;
@@ -29,7 +32,7 @@ function getToolLogSummary(name: string, args: Record<string, unknown>): string 
   }
 }
 
-export function useWebSocket({ onMessage, onStatusChange, onFlowEvent, onConnect, onLogEntry }: UseWebSocketOptions) {
+export function useWebSocket({ onMessage, onStatusChange, onFlowEvent, onConnect, onLogEntry, onContextViewEvent, onContextClassification, onContextStateUpdate }: UseWebSocketOptions) {
   const wsRef = useRef<WebSocket | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<string>("disconnected");
   const reconnectAttempts = useRef(0);
@@ -41,11 +44,17 @@ export function useWebSocket({ onMessage, onStatusChange, onFlowEvent, onConnect
   const onFlowEventRef = useRef(onFlowEvent);
   const onConnectRef = useRef(onConnect);
   const onLogEntryRef = useRef(onLogEntry);
+  const onContextViewEventRef = useRef(onContextViewEvent);
+  const onContextClassificationRef = useRef(onContextClassification);
+  const onContextStateUpdateRef = useRef(onContextStateUpdate);
   onMessageRef.current = onMessage;
   onStatusChangeRef.current = onStatusChange;
   onFlowEventRef.current = onFlowEvent;
   onConnectRef.current = onConnect;
   onLogEntryRef.current = onLogEntry;
+  onContextViewEventRef.current = onContextViewEvent;
+  onContextClassificationRef.current = onContextClassification;
+  onContextStateUpdateRef.current = onContextStateUpdate;
 
   // Accumulator for streaming assistant messages
   const streamingMessage = useRef<ChatMessage | null>(null);
@@ -466,7 +475,7 @@ export function useWebSocket({ onMessage, onStatusChange, onFlowEvent, onConnect
         onFlowEventRef.current?.(data as FlowExecutionEvent);
         break;
 
-      // Context Agent transparency events — emit to log stream
+      // Context Agent transparency events — emit to log stream AND context view
       case "context_agent_event": {
         const evt = data.event;
         if (evt.type === "classification") {
@@ -478,6 +487,14 @@ export function useWebSocket({ onMessage, onStatusChange, onFlowEvent, onConnect
             message: `Intent: ${evt.intent} | Complexity: ${evt.complexity} | Route: ${evt.routedTo}${evt.handleDirectly ? " (direct)" : ""}`,
             status: "complete",
           } satisfies LogEntry);
+          // Forward to context view
+          onContextClassificationRef.current?.({
+            timestamp: Date.now(),
+            intent: evt.intent,
+            complexity: evt.complexity,
+            routedTo: evt.routedTo,
+            handleDirectly: evt.handleDirectly,
+          });
         } else if (evt.type === "briefing_generated") {
           emitLog({
             id: `log-ctx-briefing-${Date.now()}`,
@@ -497,9 +514,18 @@ export function useWebSocket({ onMessage, onStatusChange, onFlowEvent, onConnect
             detail: JSON.stringify(evt.state, null, 2).slice(0, 500),
             status: "complete",
           } satisfies LogEntry);
+          // Forward to context view
+          onContextStateUpdateRef.current?.(evt.state);
         }
         break;
       }
+
+      // Context View events — forward to context view handler
+      case "context_window_snapshot":
+      case "briefing_diff":
+      case "token_usage_update":
+        onContextViewEventRef.current?.(data as ContextViewEvent);
+        break;
     }
   };
 

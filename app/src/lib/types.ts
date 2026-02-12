@@ -119,6 +119,124 @@ export type ContextAgentEvent =
   | { type: "briefing_generated"; tokensSaved: number }
   | { type: "state_updated"; state: unknown };
 
+// ── Context View Types ──────────────────────────────────────
+
+/** Token breakdown by category for a context window snapshot */
+export interface ContextTokenBreakdown {
+  systemPrompt: number;
+  briefing: number;
+  toolDefinitions: number;
+  conversationHistory: number;
+  toolResults: number;
+  fileContents: number;
+  other: number;
+}
+
+/** A labeled section within the context window */
+export interface ContextSection {
+  name: string;
+  tokenCount: number;
+  summary: string;
+  category: "system" | "briefing" | "tools" | "conversation" | "files" | "other";
+}
+
+/** Snapshot of a node's context window state */
+export interface ContextWindowSnapshot {
+  type: "context_window_snapshot";
+  sessionId: string;
+  executionId?: string;
+  nodeId: string;
+  nodeLabel?: string;
+  model: string;
+  maxTokens: number;
+  timestamp: number;
+  breakdown: ContextTokenBreakdown;
+  totalInputTokens: number;
+  percentFull: number;
+  sections: ContextSection[];
+}
+
+/** Item included or excluded from a briefing */
+export interface BriefingItem {
+  type: "message" | "tool_result" | "file_content" | "decision" | "error" | "other";
+  summary: string;
+  tokenCount: number;
+  reason?: string;
+}
+
+/** Diff showing what was included/excluded in a briefing */
+export interface BriefingDiff {
+  type: "briefing_diff";
+  sessionId: string;
+  executionId?: string;
+  nodeId: string;
+  timestamp: number;
+  included: BriefingItem[];
+  excluded: BriefingItem[];
+  originalTokens: number;
+  briefingTokens: number;
+  tokensSaved: number;
+  compressionRatio: number;
+}
+
+/** Actual token usage after an LLM call */
+export interface TokenUsageUpdate {
+  type: "token_usage_update";
+  sessionId: string;
+  executionId?: string;
+  nodeId: string;
+  timestamp: number;
+  actual: {
+    inputTokens: number;
+    outputTokens: number;
+    cacheCreationInputTokens?: number;
+    cacheReadInputTokens?: number;
+  };
+  estimated: number;
+  delta: number;
+  cumulativeSession: {
+    totalInputTokens: number;
+    totalOutputTokens: number;
+    totalCost: number;
+  };
+}
+
+/** Union of all context view events from the sidecar */
+export type ContextViewEvent = ContextWindowSnapshot | BriefingDiff | TokenUsageUpdate;
+
+/** Classification entry for display in context view */
+export interface ContextClassification {
+  timestamp: number;
+  intent: string;
+  complexity: string;
+  routedTo: string;
+  handleDirectly: boolean;
+}
+
+/** Complete context view state managed by useContextView */
+export interface ContextViewState {
+  /** Latest context window snapshot */
+  latestSnapshot: ContextWindowSnapshot | null;
+  /** All snapshots (per-node history) */
+  snapshots: ContextWindowSnapshot[];
+  /** All briefing diffs */
+  briefingDiffs: BriefingDiff[];
+  /** All token usage updates */
+  tokenUsageUpdates: TokenUsageUpdate[];
+  /** Classification events */
+  classifications: ContextClassification[];
+  /** Context Agent structured state (latest) */
+  contextState: unknown | null;
+  /** Cumulative session stats */
+  cumulativeStats: {
+    totalInputTokens: number;
+    totalOutputTokens: number;
+    totalCost: number;
+  };
+  /** Budget warning level */
+  budgetWarning: "none" | "yellow" | "red";
+}
+
 export type WSMessageFromSidecar =
   | { type: "assistant_text"; messageId: string; delta: string }
   | { type: "assistant_text_done"; messageId: string; model: string; tokensIn: number; tokensOut: number; costUsd: number }
@@ -133,6 +251,10 @@ export type WSMessageFromSidecar =
   | { type: "pong" }
   // Context Agent events
   | { type: "context_agent_event"; sessionId: string; event: ContextAgentEvent }
+  // Context View events
+  | ContextWindowSnapshot
+  | BriefingDiff
+  | TokenUsageUpdate
   // Flow execution events
   | FlowExecutionEvent;
 

@@ -85,7 +85,7 @@ function parseJSON<T>(raw: string): T | null {
 
 // ── Context Agent System Prompt ─────────────────────────────
 
-const CONTEXT_AGENT_SYSTEM_PROMPT = `You are the Context Agent for ArchonIDE, an AI-powered IDE. You orchestrate multi-turn coding conversations.
+const CONTEXT_AGENT_SYSTEM_PROMPT = `You are the Context Agent, an internal orchestrator for multi-turn coding conversations in an AI-powered IDE.
 
 Your responsibilities:
 1. CLASSIFY user intent: feature | bug | question | approval | refactor | docs
@@ -312,11 +312,59 @@ Start with "TASK:" and include sections as needed. Be concise — aim for 20-40%
     const briefingTokens = Math.ceil(text.length / 4);
     const tokensSaved = Math.max(0, rawHistoryTokens - briefingTokens);
 
-    // Emit briefing event
+    // Emit briefing event (existing)
     send(ws, {
       type: "context_agent_event",
       sessionId: this.sessionId,
       event: { type: "briefing_generated", tokensSaved },
+    });
+
+    // Emit briefing_diff for the context view
+    const includedItems: Array<{ type: string; summary: string; tokenCount: number; reason?: string }> = [];
+    const excludedItems: Array<{ type: string; summary: string; tokenCount: number; reason?: string }> = [];
+
+    // Build included items from the briefing text sections
+    if (text) {
+      includedItems.push({
+        type: "message",
+        summary: `Curated briefing for ${classification.routeToModel}`,
+        tokenCount: briefingTokens,
+      });
+    }
+
+    // Track what was available vs. what was included
+    if (this.state.files && Object.keys(this.state.files).length > 0) {
+      for (const [path, info] of Object.entries(this.state.files)) {
+        const fileTokens = Math.ceil(((info.summary?.length ?? 0) + (info.changes?.length ?? 0)) / 4);
+        if (text.includes(path)) {
+          includedItems.push({ type: "file_content", summary: path, tokenCount: fileTokens });
+        } else {
+          excludedItems.push({ type: "file_content", summary: path, tokenCount: fileTokens, reason: "Not referenced in briefing" });
+        }
+      }
+    }
+    for (const err of this.state.errors) {
+      const errTokens = Math.ceil(err.error.length / 4);
+      if (err.resolution) {
+        excludedItems.push({ type: "error", summary: err.error.slice(0, 60), tokenCount: errTokens, reason: "Resolved" });
+      } else {
+        includedItems.push({ type: "error", summary: err.error.slice(0, 60), tokenCount: errTokens });
+      }
+    }
+
+    const compressionRatio = rawHistoryTokens > 0 ? Math.max(0, 1 - (briefingTokens / rawHistoryTokens)) : 0;
+
+    send(ws, {
+      type: "briefing_diff",
+      sessionId: this.sessionId,
+      nodeId: "context-agent",
+      timestamp: Date.now(),
+      included: includedItems,
+      excluded: excludedItems,
+      originalTokens: rawHistoryTokens,
+      briefingTokens,
+      tokensSaved,
+      compressionRatio,
     });
 
     console.log(
