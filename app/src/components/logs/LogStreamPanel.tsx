@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Trash2, Download, Filter, ChevronRight, ChevronDown, Loader } from "lucide-react";
+import { Trash2, Download, Copy, Check, Filter, ChevronRight, ChevronDown, Loader } from "lucide-react";
 import type { LogEntry } from "../../lib/types";
 import "./LogStreamPanel.css";
 
@@ -58,10 +58,22 @@ export function LogStreamPanel({ logEntries, onClear }: LogStreamPanelProps) {
     });
   };
 
-  const handleExport = () => {
-    const text = filteredLogs.map((l) =>
+  const [copied, setCopied] = useState(false);
+
+  const formatLogs = () =>
+    filteredLogs.map((l) =>
       `[${new Date(l.timestamp).toISOString()}] [${l.level.toUpperCase()}] [${l.source}] ${l.message}${l.detail ? "\n  " + l.detail : ""}`
     ).join("\n");
+
+  const handleCopyAll = () => {
+    navigator.clipboard.writeText(formatLogs()).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  };
+
+  const handleExport = () => {
+    const text = formatLogs();
     const blob = new Blob([text], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -105,6 +117,9 @@ export function LogStreamPanel({ logEntries, onClear }: LogStreamPanelProps) {
             </button>
           ))}
         </div>
+        <button className="log-action-btn" onClick={handleCopyAll} title="Copy all logs">
+          {copied ? <Check size={14} /> : <Copy size={14} />}
+        </button>
         <button className="log-action-btn" onClick={handleExport} title="Export logs">
           <Download size={14} />
         </button>

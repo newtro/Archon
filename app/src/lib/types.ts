@@ -143,6 +143,8 @@ export type FlowExecutionEvent =
   | { type: "node_streaming"; executionId: string; nodeId: string; delta: string }
   | { type: "node_completed"; executionId: string; nodeId: string; output: NodeOutput }
   | { type: "node_error"; executionId: string; nodeId: string; error: string }
+  | { type: "node_tool_call"; executionId: string; nodeId: string; toolCall: ToolCall }
+  | { type: "node_tool_result"; executionId: string; nodeId: string; toolCallId: string; result: string; status: ToolCallStatus; durationMs: number }
   | { type: "flow_completed"; executionId: string; result: string; state: unknown }
   | { type: "flow_error"; executionId: string; error: string }
   | { type: "human_review_requested"; executionId: string; nodeId: string; prompt: string };

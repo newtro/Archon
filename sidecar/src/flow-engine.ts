@@ -289,9 +289,14 @@ async function executeLLMNode(
   const toolPreset = cfg.toolPreset as ToolPreset | undefined;
   const extraTools = (cfg.tools as string[]) ?? [];
 
-  // Build system prompt: node's own + project context output (if any)
-  const systemParts = [systemPrompt, contextOutput].filter(Boolean);
-  const fullSystemPrompt = systemParts.length > 0 ? systemParts.join("\n\n---\n\n") : undefined;
+  // Build system prompt: node's own + project context + project root info
+  const projectRoot = resolveNodeCwd(cfg);
+  const systemParts = [
+    systemPrompt,
+    contextOutput,
+    `You are working in the project directory: ${projectRoot}\nUse your tools (Read, Glob, Grep, etc.) to explore and understand this project. Do NOT rely on prior knowledge about other projects.`,
+  ].filter(Boolean);
+  const fullSystemPrompt = systemParts.join("\n\n---\n\n");
 
   // Resolve tools from preset + any extra tools
   const resolvedTools = resolveToolPreset(toolPreset);
@@ -347,23 +352,132 @@ async function executeLLMNode(
   let result = "";
   let totalCost = 0;
 
+  // Track tool calls for the frontend
+  const emittedToolIds = new Set<string>();
+  const toolStartTimes = new Map<string, number>();
+
   for await (const event of query({ prompt, options })) {
     if (event.type === "stream_event") {
-      const streamEvent = event.event;
+      const streamEvent = event.event as Record<string, unknown>;
+      const streamType = streamEvent.type as string;
+
+      // Detect tool_use blocks from content_block_start (earliest detection point)
+      if (streamType === "content_block_start") {
+        const contentBlock = streamEvent.content_block as Record<string, unknown> | undefined;
+        if (contentBlock?.type === "tool_use" && contentBlock.id && contentBlock.name) {
+          const toolId = contentBlock.id as string;
+          if (!emittedToolIds.has(toolId)) {
+            const startedAt = Date.now();
+            emittedToolIds.add(toolId);
+            toolStartTimes.set(toolId, startedAt);
+            emitEvent(ws, {
+              type: "node_tool_call",
+              executionId,
+              nodeId: node.id,
+              toolCall: {
+                id: toolId,
+                name: contentBlock.name as string,
+                args: (contentBlock.input as Record<string, unknown>) ?? {},
+                status: "loading" as const,
+                startedAt,
+              },
+            });
+            console.log(`[flow-engine] TOOL_START: ${contentBlock.name} (${toolId})`);
+          }
+        }
+      }
+
+      // Stream text deltas to the frontend
       if (
-        streamEvent.type === "content_block_delta" &&
-        "delta" in streamEvent &&
-        streamEvent.delta.type === "text_delta"
+        streamType === "content_block_delta" &&
+        streamEvent.delta &&
+        (streamEvent.delta as Record<string, unknown>).type === "text_delta"
       ) {
-        result += streamEvent.delta.text;
+        const text = (streamEvent.delta as Record<string, unknown>).text as string;
+        result += text;
         emitEvent(ws, {
           type: "node_streaming",
           executionId,
           nodeId: node.id,
-          delta: streamEvent.delta.text,
+          delta: text,
         });
       }
-    } else if (event.type === "result" && event.subtype === "success") {
+    } else if (event.type === "assistant") {
+      // Fallback: extract tool_use blocks not caught from stream_event
+      if (event.message?.content) {
+        for (const block of event.message.content) {
+          if (block.type === "tool_use" && !emittedToolIds.has(block.id)) {
+            const startedAt = Date.now();
+            emittedToolIds.add(block.id);
+            toolStartTimes.set(block.id, startedAt);
+            emitEvent(ws, {
+              type: "node_tool_call",
+              executionId,
+              nodeId: node.id,
+              toolCall: {
+                id: block.id,
+                name: block.name,
+                args: block.input as Record<string, unknown>,
+                status: "loading" as const,
+                startedAt,
+              },
+            });
+            console.log(`[flow-engine] TOOL_START (fallback): ${block.name} (${block.id})`);
+          }
+        }
+      }
+    } else if (event.type === "user") {
+      // Tool result — the SDK executed a tool and this is the result
+      if (event.parent_tool_use_id) {
+        let resultText = "";
+        let isError = false;
+
+        const e = event as Record<string, unknown>;
+        const msgContent = (event.message as Record<string, unknown>)?.content;
+        if (Array.isArray(msgContent)) {
+          for (const block of msgContent) {
+            const b = block as Record<string, unknown>;
+            if (b.type === "tool_result") {
+              if (b.is_error) isError = true;
+              const c = b.content;
+              if (typeof c === "string") {
+                resultText = c;
+              } else if (Array.isArray(c)) {
+                resultText = c
+                  .filter((x: Record<string, unknown>) => x.type === "text")
+                  .map((x: Record<string, unknown>) => x.text as string)
+                  .join("\n");
+              } else if (c != null) {
+                resultText = JSON.stringify(c, null, 2);
+              }
+            }
+          }
+        }
+        if (!resultText) {
+          const raw = e.tool_use_result;
+          if (typeof raw === "string") resultText = raw;
+          else if (raw != null) resultText = JSON.stringify(raw, null, 2);
+        }
+        if (!resultText && typeof msgContent === "string") {
+          resultText = msgContent;
+        }
+
+        const startTime = toolStartTimes.get(event.parent_tool_use_id);
+        const durationMs = startTime ? Date.now() - startTime : 0;
+        toolStartTimes.delete(event.parent_tool_use_id);
+
+        emitEvent(ws, {
+          type: "node_tool_result",
+          executionId,
+          nodeId: node.id,
+          toolCallId: event.parent_tool_use_id,
+          result: resultText,
+          status: isError ? ("error" as const) : ("success" as const),
+          durationMs,
+        });
+        console.log(`[flow-engine] TOOL_DONE: ${event.parent_tool_use_id} ${isError ? "ERROR" : "OK"} (${durationMs}ms)`);
+      }
+    } else if (event.type === "result") {
       totalCost = event.total_cost_usd ?? 0;
     }
   }

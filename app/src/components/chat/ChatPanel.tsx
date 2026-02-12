@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
-import { MessageCircle, Layers, SquarePen, History, Trash2, Bug } from "lucide-react";
+import { MessageCircle, Layers, SquarePen, History, Trash2 } from "lucide-react";
 import { ChatMessage as ChatMessageComponent } from "./ChatMessage";
 import { ChatInput } from "./ChatInput";
+import { ChatContextMenu } from "./ChatContextMenu";
 import { useDensity, type DensityMode } from "../../contexts/DensityContext";
 import { listSessions } from "../../lib/chat-storage";
 import type { ChatMessage, ChatSession, FlowSummary, ImageAttachment } from "../../lib/types";
@@ -19,8 +20,6 @@ interface ChatPanelProps {
   sessionId?: string | null;
   onLoadSession?: (id: string) => void;
   onDeleteSession?: (id: string) => void;
-  debugActive?: boolean;
-  onToggleDebug?: () => void;
 }
 
 const DENSITY_LABELS: Record<DensityMode, string> = {
@@ -41,11 +40,14 @@ function timeAgo(ts: number): string {
   return new Date(ts).toLocaleDateString();
 }
 
-export function ChatPanel({ messages, onSendMessage, isConnected, flows, selectedFlowId, onFlowSelect, isFlowRunning, onNewChat, sessionId, onLoadSession, onDeleteSession, debugActive, onToggleDebug }: ChatPanelProps) {
+export function ChatPanel({ messages, onSendMessage, isConnected, flows, selectedFlowId, onFlowSelect, isFlowRunning, onNewChat, sessionId, onLoadSession, onDeleteSession }: ChatPanelProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
   const { density, cycleDensity } = useDensity();
+
+  // Context menu state
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; messageContent: string | null; hasSelection: boolean } | null>(null);
 
   // History dropdown state
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -92,6 +94,26 @@ export function ChatPanel({ messages, onSendMessage, isConnected, flows, selecte
     }
     return acc;
   }, []);
+
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const selection = window.getSelection();
+    const hasSelection = !!selection && selection.toString().trim().length > 0;
+
+    // Walk up from target to find the closest .message element and get its message id
+    let messageContent: string | null = null;
+    let el = e.target as HTMLElement | null;
+    while (el && !el.classList.contains("chat-messages")) {
+      if (el.classList.contains("message") && el.dataset.messageId) {
+        const msg = deduped.find((m) => m.id === el!.dataset.messageId);
+        if (msg) messageContent = msg.content;
+        break;
+      }
+      el = el.parentElement;
+    }
+
+    setCtxMenu({ x: e.clientX, y: e.clientY, messageContent, hasSelection });
+  }, [deduped]);
 
   useEffect(() => {
     if (autoScroll) {
@@ -166,15 +188,6 @@ export function ChatPanel({ messages, onSendMessage, isConnected, flows, selecte
             <SquarePen size={14} />
           </button>
         )}
-        {onToggleDebug && (
-          <button
-            className={`chat-header-btn ${debugActive ? "active" : ""}`}
-            onClick={onToggleDebug}
-            title="Toggle debug log panel"
-          >
-            <Bug size={14} />
-          </button>
-        )}
         <button
           className="chat-density-btn"
           onClick={cycleDensity}
@@ -188,6 +201,7 @@ export function ChatPanel({ messages, onSendMessage, isConnected, flows, selecte
         className="chat-messages"
         ref={containerRef}
         onScroll={handleScroll}
+        onContextMenu={handleContextMenu}
       >
         {deduped.length === 0 && (
           <div className="chat-empty">
@@ -236,6 +250,15 @@ export function ChatPanel({ messages, onSendMessage, isConnected, flows, selecte
         onFlowSelect={onFlowSelect}
         isFlowRunning={isFlowRunning}
       />
+      {ctxMenu && (
+        <ChatContextMenu
+          x={ctxMenu.x}
+          y={ctxMenu.y}
+          hasSelection={ctxMenu.hasSelection}
+          messageContent={ctxMenu.messageContent}
+          onClose={() => setCtxMenu(null)}
+        />
+      )}
     </div>
   );
 }

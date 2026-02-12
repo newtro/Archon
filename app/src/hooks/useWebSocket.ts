@@ -157,12 +157,33 @@ export function useWebSocket({ onMessage, onStatusChange, onFlowEvent, onConnect
       }
 
       case "assistant_text_done": {
-        if (streamingMessage.current?.id === data.messageId) {
+        // Create streaming message if it doesn't exist (tool-only response with no text)
+        if (!streamingMessage.current || streamingMessage.current.id !== data.messageId) {
+          streamingMessage.current = {
+            id: data.messageId,
+            role: "assistant",
+            content: "",
+            timestamp: Date.now(),
+            isStreaming: true,
+            toolCalls: [],
+            thinking: [],
+          };
+        }
+
+        if (streamingMessage.current.id === data.messageId) {
           streamingMessage.current.isStreaming = false;
           streamingMessage.current.model = data.model;
           streamingMessage.current.tokensIn = data.tokensIn;
           streamingMessage.current.tokensOut = data.tokensOut;
           streamingMessage.current.costUsd = data.costUsd;
+
+          // Mark any remaining "loading" tool calls as "success" (safety net)
+          for (const tc of streamingMessage.current.toolCalls ?? []) {
+            if (tc.status === "loading") {
+              tc.status = "success";
+              tc.durationMs = tc.durationMs ?? Date.now() - tc.startedAt;
+            }
+          }
 
           // Update LLM log entry with final stats
           emitLog({
@@ -404,6 +425,41 @@ export function useWebSocket({ onMessage, onStatusChange, onFlowEvent, onConnect
         });
         onFlowEventRef.current?.(data as FlowExecutionEvent);
         break;
+
+      case "node_tool_call": {
+        // Tool call started during flow node execution — log it and forward to flow handler
+        const tc = (data as FlowExecutionEvent & { type: "node_tool_call" }).toolCall;
+        const toolSummary = getToolLogSummary(tc.name, tc.args);
+        emitLog({
+          id: `log-tool-${tc.id}`,
+          timestamp: Date.now(),
+          level: "tool",
+          source: tc.name,
+          message: toolSummary,
+          detail: JSON.stringify(tc.args, null, 2),
+          status: "pending",
+          correlationId: tc.id,
+        } satisfies LogEntry);
+        onFlowEventRef.current?.(data as FlowExecutionEvent);
+        break;
+      }
+
+      case "node_tool_result": {
+        // Tool call completed during flow node execution — update log and forward
+        const toolResult = data as FlowExecutionEvent & { type: "node_tool_result" };
+        emitLog({
+          update: true,
+          correlationId: toolResult.toolCallId,
+          patch: {
+            detail: toolResult.result?.slice(0, 1000),
+            durationMs: toolResult.durationMs,
+            status: toolResult.status === "error" ? "error" : "complete",
+            level: toolResult.status === "error" ? "error" : "tool",
+          },
+        });
+        onFlowEventRef.current?.(data as FlowExecutionEvent);
+        break;
+      }
 
       case "node_streaming":
       case "human_review_requested":

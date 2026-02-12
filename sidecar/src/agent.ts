@@ -276,13 +276,21 @@ async function handleUserMessage(
       prompt = effectiveContent;
     }
 
-    // Track tool call start times for duration calculation
-    const toolStartTimes = new Map<string, number>();
+    // Track tool calls, turns, and emit debug info
+    const tracker = createQueryTracker();
+
+    emitDebugLog(ws, "agent", `Starting query | messageId=${messageId} | cwd=${globalProjectRoot ?? "(none)"} | resuming=${!!sdkSid}`);
+    console.log(`[agent] Starting query | cwd=${globalProjectRoot} | resuming=${!!sdkSid}`);
 
     // Use the Claude Agent SDK to handle the message
+    let eventCount = 0;
     for await (const event of query({ prompt, options })) {
-      handleSDKEvent(ws, messageId, event, sessionId, toolStartTimes);
+      eventCount++;
+      handleSDKEvent(ws, messageId, event, sessionId, tracker);
     }
+
+    emitDebugLog(ws, "agent", `Query complete | ${eventCount} events | ${tracker.turnCount} turns | ${tracker.emittedToolIds.size} tools`);
+    console.log(`[agent] Query complete | ${eventCount} events | ${tracker.turnCount} turns | ${tracker.emittedToolIds.size} tools`);
   } catch (err) {
     console.error("[agent] Error:", err);
 
@@ -304,36 +312,6 @@ async function handleUserMessage(
   }
 }
 
-/** Summarize an SDK event for debug logging */
-function summarizeSDKEvent(event: SDKMessage): string {
-  const e = event as Record<string, unknown>;
-  switch (event.type) {
-    case "assistant": {
-      const content = (e.message as Record<string, unknown>)?.content;
-      if (Array.isArray(content)) {
-        const blockTypes = content.map((b: Record<string, unknown>) => b.type).join(", ");
-        return `blocks: [${blockTypes}]`;
-      }
-      return "assistant message";
-    }
-    case "user": {
-      const parentId = e.parent_tool_use_id as string | null;
-      if (parentId) return `tool_result for ${parentId}`;
-      return "user message";
-    }
-    case "result":
-      return `${e.subtype} | turns=${e.num_turns} | cost=$${(e.total_cost_usd as number)?.toFixed(4) ?? "?"}`;
-    case "system":
-      return `${e.subtype}${e.model ? ` | model=${e.model}` : ""}${e.tools ? ` | tools=${(e.tools as string[]).length}` : ""}`;
-    case "tool_progress":
-      return `${e.tool_name} (${e.tool_use_id}) ${e.elapsed_time_seconds}s`;
-    case "tool_use_summary":
-      return `${(e.preceding_tool_use_ids as string[])?.length ?? 0} tools: ${(e.summary as string)?.slice(0, 200)}`;
-    default:
-      return JSON.stringify(e, null, 2).slice(0, 300);
-  }
-}
-
 /** Send a debug log entry to the frontend */
 function emitDebugLog(ws: WebSocket, source: string, message: string, detail?: string): void {
   send(ws, {
@@ -344,70 +322,159 @@ function emitDebugLog(ws: WebSocket, source: string, message: string, detail?: s
       level: "debug",
       source,
       message,
-      detail: detail?.slice(0, 2000),
+      detail: detail?.slice(0, 4000),
       status: "complete",
     },
   });
 }
 
-function handleSDKEvent(ws: WebSocket, messageId: string, event: SDKMessage, frontendSessionId?: string, toolStartTimes?: Map<string, number>): void {
-  // Debug log every event type
+/** Safely serialize an object for debug, redacting large fields */
+function debugJson(obj: unknown, maxLen = 2000): string {
+  try {
+    return JSON.stringify(obj, (_key, val) => {
+      // Truncate long strings (file contents, base64, etc.)
+      if (typeof val === "string" && val.length > 500) {
+        return val.slice(0, 500) + `... (${val.length} chars)`;
+      }
+      return val;
+    }, 2).slice(0, maxLen);
+  } catch {
+    return String(obj).slice(0, maxLen);
+  }
+}
+
+/** State tracker for a single query — tracks tool calls, turns, emitted IDs */
+interface QueryTracker {
+  toolStartTimes: Map<string, number>;
+  emittedToolIds: Set<string>;
+  turnCount: number;
+}
+
+function createQueryTracker(): QueryTracker {
+  return {
+    toolStartTimes: new Map(),
+    emittedToolIds: new Set(),
+    turnCount: 0,
+  };
+}
+
+function handleSDKEvent(ws: WebSocket, messageId: string, event: SDKMessage, frontendSessionId?: string, tracker?: QueryTracker): void {
+  const e = event as Record<string, unknown>;
   const eventType = event.type;
-  const subtype = (event as Record<string, unknown>).subtype as string | undefined;
+  const subtype = e.subtype as string | undefined;
   const label = subtype ? `${eventType}:${subtype}` : eventType;
 
-  // Skip stream_event text deltas from debug log (too noisy)
-  if (eventType !== "stream_event") {
-    const debugDetail = summarizeSDKEvent(event);
-    console.log(`[sdk-event] ${label}${debugDetail ? ` | ${debugDetail}` : ""}`);
-    emitDebugLog(ws, `sdk:${label}`, debugDetail || label);
+  // ── Debug log EVERY event (skip only text_delta stream events — too noisy) ──
+  const isTextDelta =
+    eventType === "stream_event" &&
+    (e.event as Record<string, unknown>)?.type === "content_block_delta" &&
+    ((e.event as Record<string, unknown>)?.delta as Record<string, unknown>)?.type === "text_delta";
+
+  if (!isTextDelta) {
+    let detail: string;
+    if (eventType === "stream_event") {
+      detail = debugJson(e.event, 1500);
+    } else if (eventType === "assistant") {
+      // Show content block types and tool names, not full message
+      const content = (e.message as Record<string, unknown>)?.content;
+      const blocks = Array.isArray(content)
+        ? content.map((b: Record<string, unknown>) => {
+            if (b.type === "tool_use") return `tool_use(${b.name}, id=${b.id})`;
+            if (b.type === "text") return `text(${((b.text as string) ?? "").slice(0, 100)}...)`;
+            return String(b.type);
+          })
+        : [];
+      detail = `turn ${tracker?.turnCount ?? "?"}, blocks: [${blocks.join(", ")}]`;
+    } else if (eventType === "user") {
+      const parentId = e.parent_tool_use_id;
+      detail = parentId
+        ? `tool_result for ${parentId}\n${debugJson(e.tool_use_result, 800)}`
+        : `user message\n${debugJson(e.message, 800)}`;
+    } else if (eventType === "result") {
+      detail = `subtype=${e.subtype} turns=${e.num_turns} cost=$${(e.total_cost_usd as number)?.toFixed(4)} tokens_in=${(e.usage as Record<string, unknown>)?.input_tokens} tokens_out=${(e.usage as Record<string, unknown>)?.output_tokens}`;
+      if (e.subtype !== "success") {
+        detail += `\nerrors: ${debugJson((e as Record<string, unknown>).errors, 500)}`;
+      }
+    } else {
+      detail = debugJson(e, 1500);
+    }
+
+    console.log(`[sdk] ${label} | ${detail.split("\n")[0]}`);
+    emitDebugLog(ws, `sdk:${label}`, detail);
   }
+
+  // ── Handle each event type ──────────────────────────────────────────────────
 
   switch (event.type) {
     case "stream_event": {
-      // SDKPartialAssistantMessage — streaming deltas
-      const streamEvent = event.event;
+      const streamEvent = event.event as Record<string, unknown>;
+      const streamType = streamEvent.type as string;
 
-      // Log non-text stream events for debug (content_block_start, content_block_stop, etc.)
-      if (streamEvent.type !== "content_block_delta") {
-        const streamDetail = JSON.stringify(streamEvent, null, 2).slice(0, 500);
-        console.log(`[sdk-event] stream_event:${streamEvent.type}`);
-        emitDebugLog(ws, `sdk:stream:${streamEvent.type}`, streamDetail);
+      // Detect tool_use blocks from content_block_start (earliest detection point)
+      if (streamType === "content_block_start") {
+        const contentBlock = streamEvent.content_block as Record<string, unknown> | undefined;
+        if (contentBlock?.type === "tool_use" && contentBlock.id && contentBlock.name) {
+          const toolId = contentBlock.id as string;
+          if (tracker && !tracker.emittedToolIds.has(toolId)) {
+            const startedAt = Date.now();
+            tracker.emittedToolIds.add(toolId);
+            tracker.toolStartTimes.set(toolId, startedAt);
+            send(ws, {
+              type: "tool_call_start",
+              messageId,
+              toolCall: {
+                id: toolId,
+                name: contentBlock.name as string,
+                args: (contentBlock.input as Record<string, unknown>) ?? {},
+                status: "loading" as const,
+                startedAt,
+              },
+            });
+            console.log(`[sdk] TOOL_START from stream: ${contentBlock.name} (${toolId})`);
+          }
+        }
       }
 
+      // Stream text deltas to the frontend
       if (
-        streamEvent.type === "content_block_delta" &&
-        "delta" in streamEvent &&
-        streamEvent.delta.type === "text_delta"
+        streamType === "content_block_delta" &&
+        streamEvent.delta &&
+        (streamEvent.delta as Record<string, unknown>).type === "text_delta"
       ) {
         send(ws, {
           type: "assistant_text",
           messageId,
-          delta: streamEvent.delta.text,
+          delta: (streamEvent.delta as Record<string, unknown>).text as string,
         });
       }
       break;
     }
 
     case "assistant": {
-      // SDKAssistantMessage — complete message with all content blocks
-      // We primarily use stream_event for text, but extract tool use from here
+      // Increment turn counter
+      if (tracker) tracker.turnCount++;
+
+      // Extract tool_use blocks — emit only if not already emitted from stream_event
       if (event.message?.content) {
         for (const block of event.message.content) {
           if (block.type === "tool_use") {
-            const startedAt = Date.now();
-            toolStartTimes?.set(block.id, startedAt);
-            send(ws, {
-              type: "tool_call_start",
-              messageId,
-              toolCall: {
-                id: block.id,
-                name: block.name,
-                args: block.input as Record<string, unknown>,
-                status: "loading" as const,
-                startedAt,
-              },
-            });
+            if (tracker && !tracker.emittedToolIds.has(block.id)) {
+              const startedAt = Date.now();
+              tracker.emittedToolIds.add(block.id);
+              tracker.toolStartTimes.set(block.id, startedAt);
+              send(ws, {
+                type: "tool_call_start",
+                messageId,
+                toolCall: {
+                  id: block.id,
+                  name: block.name,
+                  args: block.input as Record<string, unknown>,
+                  status: "loading" as const,
+                  startedAt,
+                },
+              });
+              console.log(`[sdk] TOOL_START from assistant: ${block.name} (${block.id})`);
+            }
           }
         }
       }
@@ -415,38 +482,52 @@ function handleSDKEvent(ws: WebSocket, messageId: string, event: SDKMessage, fro
     }
 
     case "user": {
-      // SDKUserMessage — tool result after SDK executed a tool
+      // Tool result — the SDK executed a tool and this is the result
       if (event.parent_tool_use_id) {
         let resultText = "";
         let isError = false;
 
-        // Extract result from tool_use_result (raw result from tool execution)
-        const raw = (event as Record<string, unknown>).tool_use_result;
-        if (typeof raw === "string") {
-          resultText = raw;
-        } else if (raw != null) {
-          resultText = JSON.stringify(raw, null, 2);
-        }
-
-        // Check message.content for is_error flag and fallback result extraction
+        // Strategy 1: Extract from message.content (Anthropic API format)
         const msgContent = (event.message as Record<string, unknown>)?.content;
         if (Array.isArray(msgContent)) {
           for (const block of msgContent) {
             const b = block as Record<string, unknown>;
-            if (b.type === "tool_result" && b.tool_use_id === event.parent_tool_use_id) {
+            if (b.type === "tool_result") {
               if (b.is_error) isError = true;
-              if (!resultText && b.content != null) {
-                resultText = typeof b.content === "string"
-                  ? b.content
-                  : JSON.stringify(b.content, null, 2);
+              const c = b.content;
+              if (typeof c === "string") {
+                resultText = c;
+              } else if (Array.isArray(c)) {
+                // content block array — extract text
+                resultText = c
+                  .filter((x: Record<string, unknown>) => x.type === "text")
+                  .map((x: Record<string, unknown>) => x.text as string)
+                  .join("\n");
+              } else if (c != null) {
+                resultText = JSON.stringify(c, null, 2);
               }
             }
           }
         }
 
-        const startTime = toolStartTimes?.get(event.parent_tool_use_id);
+        // Strategy 2: Fallback to tool_use_result field
+        if (!resultText) {
+          const raw = e.tool_use_result;
+          if (typeof raw === "string") {
+            resultText = raw;
+          } else if (raw != null) {
+            resultText = JSON.stringify(raw, null, 2);
+          }
+        }
+
+        // Strategy 3: If message is a plain string
+        if (!resultText && typeof msgContent === "string") {
+          resultText = msgContent;
+        }
+
+        const startTime = tracker?.toolStartTimes.get(event.parent_tool_use_id);
         const durationMs = startTime ? Date.now() - startTime : 0;
-        toolStartTimes?.delete(event.parent_tool_use_id);
+        tracker?.toolStartTimes.delete(event.parent_tool_use_id);
 
         send(ws, {
           type: "tool_call_done",
@@ -456,30 +537,57 @@ function handleSDKEvent(ws: WebSocket, messageId: string, event: SDKMessage, fro
           status: isError ? ("error" as const) : ("success" as const),
           durationMs,
         });
+
+        console.log(`[sdk] TOOL_DONE: ${event.parent_tool_use_id} ${isError ? "ERROR" : "OK"} (${durationMs}ms, ${resultText.length} chars)`);
       }
       break;
     }
 
     case "result": {
-      // SDKResultMessage — final result with cost and usage
-      if (event.subtype === "success") {
-        // Capture SDK session ID for future resume (multi-turn context)
-        const resultSessionId = (event as Record<string, unknown>).session_id as string | undefined;
-        if (resultSessionId && frontendSessionId) {
-          sdkSessionMap.set(frontendSessionId, resultSessionId);
-          console.log(`[agent] SDK session mapped: ${frontendSessionId} -> ${resultSessionId}`);
-        }
+      // Capture SDK session ID for future resume
+      const resultSessionId = e.session_id as string | undefined;
+      if (resultSessionId && frontendSessionId) {
+        sdkSessionMap.set(frontendSessionId, resultSessionId);
+      }
 
+      // Send assistant_text_done for both success and error results
+      send(ws, {
+        type: "assistant_text_done",
+        messageId,
+        model: "sonnet",
+        tokensIn: event.usage?.input_tokens ?? 0,
+        tokensOut: event.usage?.output_tokens ?? 0,
+        costUsd: event.total_cost_usd ?? 0,
+      });
+
+      if (event.subtype !== "success") {
+        // Also show error message in chat
+        const errors = (e.errors as string[]) ?? [];
+        const errMsg = errors.length > 0 ? errors.join("\n") : `Agent stopped: ${event.subtype}`;
         send(ws, {
-          type: "assistant_text_done",
+          type: "assistant_text",
           messageId,
-          model: "sonnet",
-          tokensIn: event.usage?.input_tokens ?? 0,
-          tokensOut: event.usage?.output_tokens ?? 0,
-          costUsd: event.total_cost_usd ?? 0,
+          delta: `\n\n---\n**Agent stopped** (${event.subtype}): ${errMsg}`,
         });
       }
+
+      console.log(`[sdk] RESULT: ${event.subtype} | ${tracker?.turnCount ?? 0} turns | $${event.total_cost_usd?.toFixed(4)}`);
       break;
     }
+
+    // Handle additional event types for observability
+    case "system": {
+      // SDK init event — log tools, model, cwd
+      const tools = (e.tools as string[]) ?? [];
+      const model = e.model as string;
+      const cwd = e.cwd as string;
+      console.log(`[sdk] SYSTEM:${subtype} model=${model} cwd=${cwd} tools=[${tools.join(",")}]`);
+      break;
+    }
+
+    default:
+      // Log any unhandled event types
+      console.log(`[sdk] UNHANDLED: ${label}`);
+      break;
   }
 }

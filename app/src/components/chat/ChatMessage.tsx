@@ -14,7 +14,7 @@ export function ChatMessage({ message }: ChatMessageProps) {
 
   if (message.role === "system") {
     return (
-      <div className="message message-system">
+      <div className="message message-system" data-message-id={message.id}>
         <div className="message-system-icon">
           <AlertCircle size={14} />
         </div>
@@ -24,7 +24,7 @@ export function ChatMessage({ message }: ChatMessageProps) {
   }
 
   return (
-    <div className={`message message-${message.role}`}>
+    <div className={`message message-${message.role}`} data-message-id={message.id}>
       <div className="message-header">
         <span className="message-role">
           {message.role === "user" ? "You" : "ArchonIDE"}

@@ -82,6 +82,15 @@ export interface NodeOutput {
   durationMs: number;
 }
 
+/** Tool call info emitted during flow node execution */
+export interface FlowToolCall {
+  id: string;
+  name: string;
+  args: Record<string, unknown>;
+  status: "loading";
+  startedAt: number;
+}
+
 /** Messages sent from sidecar to frontend during flow execution */
 export type FlowExecutionEvent =
   | { type: "flow_started"; executionId: string; flowId: string }
@@ -89,6 +98,8 @@ export type FlowExecutionEvent =
   | { type: "node_streaming"; executionId: string; nodeId: string; delta: string }
   | { type: "node_completed"; executionId: string; nodeId: string; output: NodeOutput }
   | { type: "node_error"; executionId: string; nodeId: string; error: string }
+  | { type: "node_tool_call"; executionId: string; nodeId: string; toolCall: FlowToolCall }
+  | { type: "node_tool_result"; executionId: string; nodeId: string; toolCallId: string; result: string; status: "success" | "error"; durationMs: number }
   | { type: "flow_completed"; executionId: string; result: string; state: FlowState }
   | { type: "flow_error"; executionId: string; error: string }
   | { type: "human_review_requested"; executionId: string; nodeId: string; prompt: string };

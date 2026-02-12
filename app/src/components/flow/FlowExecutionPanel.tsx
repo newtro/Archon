@@ -1,31 +1,49 @@
 import { useState } from "react";
-import { NODE_REGISTRY, type NodeKind } from "../../lib/flow-types";
+import { NODE_REGISTRY, type NodeKind, type FlowDefinition } from "../../lib/flow-types";
+import { LogStreamPanel } from "../logs/LogStreamPanel";
 import type { FlowExecutionState, FlowNodeMeta, NodeExecInfo } from "../../hooks/useFlowExecution";
+import type { LogEntry } from "../../lib/types";
 import { FlowExecutionDiagram } from "./FlowExecutionDiagram";
 import "./FlowExecutionPanel.css";
 
-type ViewMode = "list" | "diagram";
+type ViewMode = "list" | "diagram" | "debug";
 
 interface FlowExecutionPanelProps {
   execState: FlowExecutionState;
   onCancel: () => void;
   onReset: () => void;
+  logEntries: LogEntry[];
+  onClearLogs: () => void;
+  previewFlow?: FlowDefinition | null;
 }
 
-export function FlowExecutionPanel({ execState, onCancel, onReset }: FlowExecutionPanelProps) {
+export function FlowExecutionPanel({ execState, onCancel, onReset, logEntries, onClearLogs, previewFlow }: FlowExecutionPanelProps) {
   const { status, nodeList, nodeStates, flow } = execState;
-  const [viewMode, setViewMode] = useState<ViewMode>("list");
+  // Use the executing flow if available, otherwise fall back to the selected preview flow
+  const diagramFlow = flow ?? previewFlow ?? null;
+  const [viewMode, setViewMode] = useState<ViewMode>("debug");
 
   const completedCount = nodeList.filter((n) => nodeStates[n.id]?.state === "completed").length;
+  const isIdle = status === "idle";
 
   return (
-    <div className={`flow-exec-panel ${viewMode === "diagram" ? "diagram-mode" : ""}`}>
+    <div className="flow-exec-panel">
       {/* Header */}
       <div className="flow-exec-header">
         <div className="flow-exec-header-left">
-          <div className={`flow-exec-status-dot ${status}`} />
+          {!isIdle && <div className={`flow-exec-status-dot ${status}`} />}
           <span className="flow-exec-title">
-            {status === "running" ? "Executing Flow" : status === "completed" ? "Flow Complete" : status === "error" ? "Flow Error" : "Flow"}
+            {viewMode === "debug"
+              ? "Debug Log"
+              : status === "running"
+                ? "Executing Flow"
+                : status === "completed"
+                  ? "Flow Complete"
+                  : status === "error"
+                    ? "Flow Error"
+                    : diagramFlow
+                      ? diagramFlow.name
+                      : "Execution"}
           </span>
         </div>
         <div className="flow-exec-header-actions">
@@ -45,11 +63,26 @@ export function FlowExecutionPanel({ execState, onCancel, onReset }: FlowExecuti
               className={`flow-exec-toggle-btn ${viewMode === "diagram" ? "active" : ""}`}
               onClick={() => setViewMode("diagram")}
               title="Diagram view"
-              disabled={!flow}
+              disabled={!diagramFlow}
             >
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <rect x="3" y="3" width="6" height="6" rx="1" /><rect x="15" y="3" width="6" height="6" rx="1" /><rect x="9" y="15" width="6" height="6" rx="1" />
                 <path d="M6 9v3a1 1 0 0 0 1 1h4" /><path d="M18 9v3a1 1 0 0 1-1 1h-4" />
+              </svg>
+            </button>
+            <button
+              className={`flow-exec-toggle-btn ${viewMode === "debug" ? "active" : ""}`}
+              onClick={() => setViewMode("debug")}
+              title="Debug log"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="2" y="3" width="20" height="18" rx="2" />
+                <line x1="6" y1="8" x2="6.01" y2="8" />
+                <line x1="9" y1="8" x2="18" y2="8" />
+                <line x1="6" y1="12" x2="6.01" y2="12" />
+                <line x1="9" y1="12" x2="18" y2="12" />
+                <line x1="6" y1="16" x2="6.01" y2="16" />
+                <line x1="9" y1="16" x2="18" y2="16" />
               </svg>
             </button>
           </div>
@@ -71,30 +104,54 @@ export function FlowExecutionPanel({ execState, onCancel, onReset }: FlowExecuti
         </div>
       </div>
 
-      {/* Content: list or diagram */}
-      {viewMode === "list" ? (
-        <>
-          <div className="flow-exec-nodes">
-            {nodeList.map((node, i) => (
-              <NodeRow
-                key={node.id}
-                node={node}
-                info={nodeStates[node.id]}
-                isLast={i === nodeList.length - 1}
-              />
-            ))}
+      {/* Content: list, diagram, or debug */}
+      {viewMode === "debug" ? (
+        <div className="flow-exec-debug-content">
+          <LogStreamPanel logEntries={logEntries} onClear={onClearLogs} />
+        </div>
+      ) : viewMode === "list" ? (
+        isIdle ? (
+          <div className="flow-exec-empty">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" opacity="0.2">
+              <line x1="8" y1="6" x2="21" y2="6" /><line x1="8" y1="12" x2="21" y2="12" /><line x1="8" y1="18" x2="21" y2="18" />
+              <line x1="3" y1="6" x2="3.01" y2="6" /><line x1="3" y1="12" x2="3.01" y2="12" /><line x1="3" y1="18" x2="3.01" y2="18" />
+            </svg>
+            <span>No flow running</span>
+            <span className="flow-exec-empty-hint">Select a flow and send a message to start execution</span>
           </div>
+        ) : (
+          <>
+            <div className="flow-exec-nodes">
+              {nodeList.map((node, i) => (
+                <NodeRow
+                  key={node.id}
+                  node={node}
+                  info={nodeStates[node.id]}
+                  isLast={i === nodeList.length - 1}
+                />
+              ))}
+            </div>
 
-          {/* Footer */}
-          <div className="flow-exec-footer">
-            <span>{completedCount}/{nodeList.length} nodes</span>
-            {execState.error && <span style={{ color: "var(--accent-red)" }}>Error</span>}
-            {status === "completed" && <span style={{ color: "var(--accent-green)" }}>Done</span>}
-          </div>
-        </>
-      ) : flow ? (
-        <FlowExecutionDiagram flow={flow} execState={execState} />
-      ) : null}
+            {/* Footer */}
+            <div className="flow-exec-footer">
+              <span>{completedCount}/{nodeList.length} nodes</span>
+              {execState.error && <span style={{ color: "var(--accent-red)" }}>Error</span>}
+              {status === "completed" && <span style={{ color: "var(--accent-green)" }}>Done</span>}
+            </div>
+          </>
+        )
+      ) : diagramFlow ? (
+        <FlowExecutionDiagram flow={diagramFlow} execState={execState} />
+      ) : (
+        <div className="flow-exec-empty">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" opacity="0.2">
+            <rect x="3" y="3" width="6" height="6" rx="1" /><rect x="15" y="3" width="6" height="6" rx="1" /><rect x="9" y="15" width="6" height="6" rx="1" />
+            <path d="M6 9v3a1 1 0 0 0 1 1h4" /><path d="M18 9v3a1 1 0 0 1-1 1h-4" />
+          </svg>
+          <span>No flow running</span>
+          <span className="flow-exec-empty-hint">Select a flow and send a message to start execution</span>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,6 +1,7 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useLayoutEffect } from "react";
 import { FileText } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
+import { invoke } from "@tauri-apps/api/core";
 import { ChatPanel } from "./components/chat/ChatPanel";
 import { Sidebar, type SidebarView } from "./components/layout/Sidebar";
 import { StatusBar } from "./components/layout/StatusBar";
@@ -22,6 +23,7 @@ import { useWorkspace } from "./contexts/WorkspaceContext";
 import { getSetting, setSetting } from "./lib/store";
 import { listFlows, loadFlow } from "./lib/flow-storage";
 import { createSession, saveMessage, loadSessionMessages, deleteSession as deleteSessionDb } from "./lib/chat-storage";
+import type { FlowDefinition } from "./lib/flow-types";
 import type { ChatMessage, WSMessageToSidecar, FlowSummary, FlowExecutionEvent, RecentProject, ImageAttachment, LogEntry, LogEntryEvent, HistoryMessage } from "./lib/types";
 
 function App() {
@@ -33,7 +35,6 @@ function App() {
   const [activeModel, setActiveModel] = useState<string>("sonnet");
   const [pendingReview, setPendingReview] = useState<HumanReviewRequest | null>(null);
   const [publishingFlow, setPublishingFlow] = useState<import("./lib/flow-types").FlowDefinition | null>(null);
-  const [showDebugPanel, setShowDebugPanel] = useState(false);
 
   // Startup / recent projects
   const [recentProjects, setRecentProjects] = useState<RecentProject[]>([]);
@@ -47,6 +48,7 @@ function App() {
   // Flow selector state
   const [flows, setFlows] = useState<FlowSummary[]>([]);
   const [selectedFlowId, setSelectedFlowId] = useState<string | null>(null);
+  const [previewFlow, setPreviewFlow] = useState<FlowDefinition | null>(null);
   const flowChatMessageRef = useRef<string | null>(null);
 
   const { layout } = useWorkspace();
@@ -64,6 +66,12 @@ function App() {
 
       const lastRoot = await getSetting<string | null>("lastProjectRoot", null);
       if (lastRoot) {
+        // Grant FS scope for the restored path — dialog-granted scope doesn't persist across restarts
+        try {
+          await invoke("allow_directory_scope", { path: lastRoot });
+        } catch (e) {
+          console.error("Failed to grant FS scope for restored project:", e);
+        }
         lastProjectRootRef.current = lastRoot;
         setProjectRoot(lastRoot);
         setActiveView("chat");
@@ -92,6 +100,15 @@ function App() {
         .catch(() => {});
     }
   }, [activeView]);
+
+  // Load full flow definition when a flow is selected (for diagram preview)
+  useEffect(() => {
+    if (selectedFlowId) {
+      loadFlow(selectedFlowId).then((f) => setPreviewFlow(f)).catch(() => setPreviewFlow(null));
+    } else {
+      setPreviewFlow(null);
+    }
+  }, [selectedFlowId]);
 
   // Persist finalized messages to SQLite
   useEffect(() => {
@@ -127,6 +144,32 @@ function App() {
               ? { ...m, content: m.content + event.delta }
               : m
           )
+        );
+        break;
+
+      case "node_tool_call":
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === flowMsgId
+              ? { ...m, toolCalls: [...(m.toolCalls || []), event.toolCall] }
+              : m
+          )
+        );
+        break;
+
+      case "node_tool_result":
+        setMessages((prev) =>
+          prev.map((m) => {
+            if (m.id !== flowMsgId) return m;
+            return {
+              ...m,
+              toolCalls: (m.toolCalls || []).map((tc) =>
+                tc.id === event.toolCallId
+                  ? { ...tc, result: event.result, status: event.status, durationMs: event.durationMs }
+                  : tc
+              ),
+            };
+          })
         );
         break;
 
@@ -183,6 +226,10 @@ function App() {
           directSend({ type: "set_api_key", key });
         }
       });
+      // Send project root immediately on connect (don't wait for useEffect)
+      if (lastProjectRootRef.current) {
+        directSend({ type: "set_project_root", path: lastProjectRootRef.current });
+      }
     },
   });
 
@@ -309,7 +356,13 @@ function App() {
   }, [send, persistProjectOpen]);
 
   // Startup page: open a recent project
-  const handleOpenRecentProject = useCallback((path: string) => {
+  const handleOpenRecentProject = useCallback(async (path: string) => {
+    // Grant FS scope — recent projects bypass the dialog so scope isn't auto-granted
+    try {
+      await invoke("allow_directory_scope", { path });
+    } catch (e) {
+      console.error("Failed to grant FS scope for recent project:", e);
+    }
     send({ type: "set_project_root", path });
     setProjectRoot(path);
     lastProjectRootRef.current = path;
@@ -375,42 +428,67 @@ function App() {
     sessionId: sessionIdRef.current,
     onLoadSession: handleLoadSession,
     onDeleteSession: handleDeleteSession,
-    debugActive: showDebugPanel,
-    onToggleDebug: () => setShowDebugPanel((prev) => !prev),
   };
 
-  const showExecPanel = execState.status !== "idle";
+  // ── Draggable vertical splitter ──────────────────────────────
+  const [rightPanelWidth, setRightPanelWidth] = useState(400);
+  const splitContainerRef = useRef<HTMLDivElement>(null);
+  const isDraggingRef = useRef(false);
+
+  // Attach mousemove/mouseup on mount (not per-render) so dragging is smooth
+  useLayoutEffect(() => {
+    const onMouseMove = (e: MouseEvent) => {
+      if (!isDraggingRef.current || !splitContainerRef.current) return;
+      const rect = splitContainerRef.current.getBoundingClientRect();
+      const newRight = rect.right - e.clientX;
+      // Clamp: min 200px, max 70% of container
+      const clamped = Math.max(200, Math.min(newRight, rect.width * 0.7));
+      setRightPanelWidth(clamped);
+    };
+    const onMouseUp = () => {
+      if (isDraggingRef.current) {
+        isDraggingRef.current = false;
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+      }
+    };
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+    };
+  }, []);
+
+  const handleSplitterMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isDraggingRef.current = true;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  }, []);
 
   const renderChatWithExecPanel = () => {
-    const chatEl = <ChatPanel {...chatPanelProps} />;
-
-    // Debug panel takes priority over flow exec panel on the right
-    if (showDebugPanel) {
-      return (
-        <div className="workspace-split">
-          <div className="workspace-split-left" style={{ flex: 1, width: "auto" }}>
-            {chatEl}
-          </div>
-          <div className="workspace-split-right debug-panel-container" style={{ width: "40%" }}>
-            <LogStreamPanel logEntries={logEntries} onClear={() => setLogEntries([])} />
-          </div>
-        </div>
-      );
-    }
-
-    if (!showExecPanel) {
-      return chatEl;
-    }
+    // Always use the same DOM structure so ChatPanel never remounts when
+    // tabs change.  Remounting would reset streaming state and abort queries.
     return (
-      <div className="workspace-split">
-        <div className="workspace-split-left" style={{ flex: 1, width: "auto" }}>
-          {chatEl}
+      <div className="workspace-split" ref={splitContainerRef}>
+        <div className="workspace-split-left" style={{ flex: 1, width: 0, minWidth: 0 }}>
+          <ChatPanel {...chatPanelProps} />
         </div>
-        <FlowExecutionPanel
-          execState={execState}
-          onCancel={cancelFlow}
-          onReset={resetFlow}
+        <div
+          className="workspace-splitter"
+          onMouseDown={handleSplitterMouseDown}
         />
+        <div style={{ width: rightPanelWidth, flexShrink: 0, height: "100%", overflow: "hidden" }}>
+          <FlowExecutionPanel
+            execState={execState}
+            onCancel={cancelFlow}
+            onReset={resetFlow}
+            logEntries={logEntries}
+            onClearLogs={() => setLogEntries([])}
+            previewFlow={previewFlow}
+          />
+        </div>
       </div>
     );
   };

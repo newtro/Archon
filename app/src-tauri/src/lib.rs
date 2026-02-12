@@ -1,4 +1,15 @@
 use tauri::Manager;
+use tauri_plugin_fs::FsExt;
+
+/// Grant the frontend read access to a directory (and all children) at runtime.
+/// This is needed when restoring a previously-opened project on app restart,
+/// because the dialog-granted scope does not persist across sessions.
+#[tauri::command]
+fn allow_directory_scope(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    app.fs_scope()
+        .allow_directory(&path, true)
+        .map_err(|e| e.to_string())
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -12,6 +23,7 @@ pub fn run() {
                 .add_migrations("sqlite:archon.db", vec![])
                 .build(),
         )
+        .invoke_handler(tauri::generate_handler![allow_directory_scope])
         .setup(|app| {
             let _window = app.get_webview_window("main").unwrap();
             Ok(())

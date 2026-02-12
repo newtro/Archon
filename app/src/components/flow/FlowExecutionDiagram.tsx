@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useCallback } from "react";
 import {
   ReactFlow,
   Background,
@@ -7,6 +7,7 @@ import {
   BackgroundVariant,
   type Node,
   type Edge,
+  type ReactFlowInstance,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { nodeTypes } from "./nodes/BaseNode";
@@ -25,6 +26,11 @@ interface FlowExecutionDiagramProps {
 }
 
 export function FlowExecutionDiagram({ flow, execState }: FlowExecutionDiagramProps) {
+  const handleInit = useCallback((instance: ReactFlowInstance) => {
+    // Fit view once on mount; avoids re-fitting on every streaming update
+    instance.fitView({ padding: 0.2 });
+  }, []);
+
   const nodes: Node[] = useMemo(() => {
     return flow.nodes.map((n) => {
       const nodeExec = execState.nodeStates[n.id];
@@ -92,8 +98,7 @@ export function FlowExecutionDiagram({ flow, execState }: FlowExecutionDiagramPr
         elementsSelectable={false}
         panOnDrag
         zoomOnScroll
-        fitView
-        fitViewOptions={{ padding: 0.2 }}
+        onInit={handleInit}
         proOptions={{ hideAttribution: true }}
       >
         <Background
