@@ -150,4 +150,68 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  flex: 1;
+}
+
+/* ── Git status badges ─────────────────────────────────────── */
+
+.file-tree-git-badge {
+  font-size: 10px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  padding: 0 4px;
+  border-radius: 2px;
+  flex-shrink: 0;
+  margin-left: auto;
+  line-height: 16px;
+}
+
+.file-tree-git-badge--M { color: #e2b93d; background: rgba(226, 185, 61, 0.12); }
+.file-tree-git-badge--A { color: #73c991; background: rgba(115, 201, 145, 0.12); }
+.file-tree-git-badge--D { color: #f14c4c; background: rgba(241, 76, 76, 0.12); }
+.file-tree-git-badge--R { color: #cca700; background: rgba(204, 167, 0, 0.12); }
+.file-tree-git-badge--C { color: #73c991; background: rgba(115, 201, 145, 0.12); }
+.file-tree-git-badge--U { color: #f14c4c; background: rgba(241, 76, 76, 0.12); }
+.file-tree-git-badge--\? { color: #73c991; background: rgba(115, 201, 145, 0.12); }
+
+/* ── Right-click context menu ──────────────────────────────── */
+
+.file-tree-ctx-menu {
+  position: fixed;
+  z-index: 200;
+  min-width: 160px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  padding: 4px 0;
+  animation: ctx-fade-in 0.1s ease-out;
+}
+
+@keyframes ctx-fade-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.file-tree-ctx-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.file-tree-ctx-item:hover {
+  background: var(--bg-hover);
+}
+
+.file-tree-ctx-empty {
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--text-muted);
 }

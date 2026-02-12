@@ -6,6 +6,7 @@ import { mcpManager } from "./mcp-manager.js";
 import { ContextAgentManager } from "./context-agent.js";
 import { countTokenBreakdown, resetTokenCounterClient } from "./token-counter.js";
 import { flowToolsServer, setFlowToolsWs, handleFlowToolResponse } from "./flow-tools.js";
+import * as gitManager from "./git-manager.js";
 
 // Initialize MCP manager (server configs will be provided by the frontend)
 console.log(`[agent] MCP manager ready (${mcpManager.listServers().length} servers)`);
@@ -91,6 +92,38 @@ interface FlowToolResponseMessage {
   error?: string;
 }
 
+// Git message types
+interface GitStatusMessage { type: "git_status" }
+interface GitDiffMessage { type: "git_diff"; file?: string; staged?: boolean }
+interface GitLogMessage { type: "git_log"; page: number; pageSize: number }
+interface GitBranchesMessage { type: "git_branches" }
+interface GitStageMessage { type: "git_stage"; files: string[] }
+interface GitUnstageMessage { type: "git_unstage"; files: string[] }
+interface GitCommitMessage { type: "git_commit"; message: string }
+interface GitPushMessage { type: "git_push"; remote?: string; branch?: string }
+interface GitPullMessage { type: "git_pull"; remote?: string; branch?: string }
+interface GitCheckoutMessage { type: "git_checkout"; branch: string }
+interface GitCreateBranchMessage { type: "git_create_branch"; name: string; startPoint?: string }
+interface GitRemotesMessage { type: "git_remotes" }
+interface GitAddRemoteMessage { type: "git_add_remote"; name: string; url: string }
+interface GitRemoveRemoteMessage { type: "git_remove_remote"; name: string }
+interface GitInitMessage { type: "git_init" }
+interface GitDiscardMessage { type: "git_discard"; files: string[] }
+interface GitStartWatchingMessage { type: "git_start_watching" }
+interface GitStopWatchingMessage { type: "git_stop_watching" }
+interface GitGenerateCommitMsgMessage { type: "git_generate_commit_msg" }
+interface GitShowMessage { type: "git_show"; hash: string }
+
+type GitMessage =
+  | GitStatusMessage | GitDiffMessage | GitLogMessage | GitBranchesMessage
+  | GitStageMessage | GitUnstageMessage | GitCommitMessage
+  | GitPushMessage | GitPullMessage
+  | GitCheckoutMessage | GitCreateBranchMessage
+  | GitRemotesMessage | GitAddRemoteMessage | GitRemoveRemoteMessage
+  | GitInitMessage | GitDiscardMessage
+  | GitStartWatchingMessage | GitStopWatchingMessage
+  | GitGenerateCommitMsgMessage | GitShowMessage;
+
 type IncomingMessage =
   | UserMessage
   | SetApiKeyMessage
@@ -101,7 +134,8 @@ type IncomingMessage =
   | CancelFlowMessage
   | ResolveReviewMessage
   | GetContextRawMessage
-  | FlowToolResponseMessage;
+  | FlowToolResponseMessage
+  | GitMessage;
 
 function send(ws: WebSocket, data: unknown): void {
   if (ws.readyState === WebSocket.OPEN) {
@@ -206,6 +240,241 @@ export async function handleMessage(
         error: message.error,
       });
       break;
+
+    // ── Git operations ────────────────────────────────────────────
+    case "git_status":
+      await handleGitCommand(ws, "git_status", async () => {
+        const data = await gitManager.getStatus();
+        send(ws, { type: "git_status_response", data });
+      });
+      break;
+
+    case "git_diff":
+      await handleGitCommand(ws, "git_diff", async () => {
+        const data = message.staged
+          ? await gitManager.getDiffStaged(message.file)
+          : await gitManager.getDiff(message.file);
+        send(ws, { type: "git_diff_response", data });
+      });
+      break;
+
+    case "git_log":
+      await handleGitCommand(ws, "git_log", async () => {
+        const data = await gitManager.getLog(message.page, message.pageSize);
+        send(ws, { type: "git_log_response", data });
+      });
+      break;
+
+    case "git_branches":
+      await handleGitCommand(ws, "git_branches", async () => {
+        const data = await gitManager.getBranches();
+        send(ws, { type: "git_branches_response", data });
+      });
+      break;
+
+    case "git_stage":
+      await handleGitCommand(ws, "git_stage", async () => {
+        await gitManager.stage(message.files);
+        send(ws, { type: "git_operation_complete", operation: "stage", success: true });
+        // Auto-refresh status after staging
+        const data = await gitManager.getStatus();
+        send(ws, { type: "git_status_response", data });
+      });
+      break;
+
+    case "git_unstage":
+      await handleGitCommand(ws, "git_unstage", async () => {
+        await gitManager.unstage(message.files);
+        send(ws, { type: "git_operation_complete", operation: "unstage", success: true });
+        const data = await gitManager.getStatus();
+        send(ws, { type: "git_status_response", data });
+      });
+      break;
+
+    case "git_commit":
+      await handleGitCommand(ws, "git_commit", async () => {
+        const hash = await gitManager.commit(message.message);
+        send(ws, { type: "git_operation_complete", operation: "commit", success: true, message: hash });
+        const data = await gitManager.getStatus();
+        send(ws, { type: "git_status_response", data });
+      });
+      break;
+
+    case "git_push":
+      await handleGitCommand(ws, "git_push", async () => {
+        const result = await gitManager.push(message.remote, message.branch);
+        send(ws, { type: "git_operation_complete", operation: "push", success: true, message: result });
+        const data = await gitManager.getStatus();
+        send(ws, { type: "git_status_response", data });
+      });
+      break;
+
+    case "git_pull":
+      await handleGitCommand(ws, "git_pull", async () => {
+        const result = await gitManager.pull(message.remote, message.branch);
+        send(ws, { type: "git_operation_complete", operation: "pull", success: true, message: result });
+        const data = await gitManager.getStatus();
+        send(ws, { type: "git_status_response", data });
+      });
+      break;
+
+    case "git_checkout":
+      await handleGitCommand(ws, "git_checkout", async () => {
+        await gitManager.checkout(message.branch);
+        send(ws, { type: "git_operation_complete", operation: "checkout", success: true });
+        const data = await gitManager.getStatus();
+        send(ws, { type: "git_status_response", data });
+      });
+      break;
+
+    case "git_create_branch":
+      await handleGitCommand(ws, "git_create_branch", async () => {
+        await gitManager.createBranch(message.name, message.startPoint);
+        send(ws, { type: "git_operation_complete", operation: "create_branch", success: true });
+        const data = await gitManager.getStatus();
+        send(ws, { type: "git_status_response", data });
+      });
+      break;
+
+    case "git_remotes":
+      await handleGitCommand(ws, "git_remotes", async () => {
+        const data = await gitManager.getRemotes();
+        send(ws, { type: "git_remotes_response", data });
+      });
+      break;
+
+    case "git_add_remote":
+      await handleGitCommand(ws, "git_add_remote", async () => {
+        await gitManager.addRemote(message.name, message.url);
+        send(ws, { type: "git_operation_complete", operation: "add_remote", success: true });
+      });
+      break;
+
+    case "git_remove_remote":
+      await handleGitCommand(ws, "git_remove_remote", async () => {
+        await gitManager.removeRemote(message.name);
+        send(ws, { type: "git_operation_complete", operation: "remove_remote", success: true });
+      });
+      break;
+
+    case "git_init":
+      await handleGitCommand(ws, "git_init", async () => {
+        await gitManager.init();
+        send(ws, { type: "git_operation_complete", operation: "init", success: true });
+        const data = await gitManager.getStatus();
+        send(ws, { type: "git_status_response", data });
+      });
+      break;
+
+    case "git_discard":
+      await handleGitCommand(ws, "git_discard", async () => {
+        const git = (await import("simple-git")).default(globalProjectRoot!);
+        await git.checkout(["--", ...message.files]);
+        send(ws, { type: "git_operation_complete", operation: "discard", success: true });
+        const data = await gitManager.getStatus();
+        send(ws, { type: "git_status_response", data });
+      });
+      break;
+
+    case "git_start_watching":
+      gitManager.startWatching((status) => {
+        send(ws, { type: "git_status_update", data: status });
+      });
+      send(ws, { type: "git_operation_complete", operation: "start_watching", success: true });
+      break;
+
+    case "git_stop_watching":
+      gitManager.stopWatching();
+      send(ws, { type: "git_operation_complete", operation: "stop_watching", success: true });
+      break;
+
+    case "git_generate_commit_msg":
+      await handleGitCommand(ws, "git_generate_commit_msg", async () => {
+        await generateCommitMessage(ws);
+      });
+      break;
+
+    case "git_show":
+      await handleGitCommand(ws, "git_show", async () => {
+        const data = await gitManager.getCommitDiff(message.hash);
+        send(ws, { type: "git_show_response", data });
+      });
+      break;
+  }
+}
+
+/** Generate a commit message using Claude based on staged changes */
+async function generateCommitMessage(ws: WebSocket): Promise<void> {
+  if (!apiKey) {
+    send(ws, { type: "git_error", error: "No API key configured", command: "git_generate_commit_msg" });
+    return;
+  }
+
+  // Collect staged diff and recent commit messages for style reference
+  const [stagedDiff, recentLog] = await Promise.all([
+    gitManager.getDiffStaged(),
+    gitManager.getLog(0, 5),
+  ]);
+
+  if (!stagedDiff.trim()) {
+    send(ws, { type: "git_error", error: "No staged changes to describe", command: "git_generate_commit_msg" });
+    return;
+  }
+
+  const recentMessages = recentLog.entries
+    .map((e) => e.message)
+    .join("\n");
+
+  const prompt = `Based on the following staged git diff, generate a concise commit message. Follow the style of the recent commit messages shown below.
+
+Rules:
+- First line should be a short summary (max 72 characters)
+- Use imperative mood ("Add feature" not "Added feature")
+- Be specific about what changed
+- If the diff is large, focus on the main purpose of the changes
+- Return ONLY the commit message text, nothing else
+
+Recent commit messages for style reference:
+${recentMessages || "(no recent commits)"}
+
+Staged diff:
+${stagedDiff.slice(0, 8000)}${stagedDiff.length > 8000 ? "\n... (diff truncated)" : ""}`;
+
+  try {
+    process.env.ANTHROPIC_API_KEY = apiKey;
+
+    let commitMessage = "";
+    for await (const event of query({ prompt, options: { model: "haiku", permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true } })) {
+      if (event.type === "assistant") {
+        const content = event.message?.content;
+        if (Array.isArray(content)) {
+          for (const block of content) {
+            if (block.type === "text") {
+              commitMessage += block.text;
+            }
+          }
+        }
+      }
+    }
+
+    // Clean up: remove quotes, trailing whitespace
+    commitMessage = commitMessage.trim().replace(/^["']|["']$/g, "");
+
+    send(ws, { type: "git_commit_msg_response", message: commitMessage });
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    send(ws, { type: "git_error", error: `Failed to generate commit message: ${errMsg}`, command: "git_generate_commit_msg" });
+  }
+}
+
+/** Helper to wrap git commands with error handling */
+async function handleGitCommand(ws: WebSocket, command: string, fn: () => Promise<void>): Promise<void> {
+  try {
+    await fn();
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[agent] Git error (${command}):`, message);
+    send(ws, { type: "git_error", error: message, command });
   }
 }
 
@@ -260,6 +529,29 @@ async function handleUserMessage(
     // Check if we have a prior SDK session to resume (multi-turn context)
     const sdkSid = sessionId ? sdkSessionMap.get(sessionId) : undefined;
 
+    // Collect git context for system prompt (fire-and-forget safe)
+    let gitContext = "";
+    if (globalProjectRoot) {
+      try {
+        const gitStatus = await gitManager.getStatus();
+        if (gitStatus.isRepo) {
+          const totalChanges = gitStatus.staged.length + gitStatus.unstaged.length + gitStatus.untracked.length;
+          const recentLog = await gitManager.getLog(0, 5);
+          const recentCommits = recentLog.entries
+            .map((e) => `  ${e.hashShort} ${e.message}`)
+            .join("\n");
+
+          gitContext = `\n\nGit status:
+- Branch: ${gitStatus.branch}${gitStatus.tracking ? ` (tracking ${gitStatus.tracking})` : ""}
+- Ahead: ${gitStatus.ahead}, Behind: ${gitStatus.behind}
+- Staged: ${gitStatus.staged.length}, Unstaged: ${gitStatus.unstaged.length}, Untracked: ${gitStatus.untracked.length} (${totalChanges} total changes)${gitStatus.staged.length > 0 ? `\n- Staged files: ${gitStatus.staged.map((f) => `${f.status} ${f.path}`).join(", ")}` : ""}${gitStatus.unstaged.length > 0 ? `\n- Modified files: ${gitStatus.unstaged.map((f) => `${f.status} ${f.path}`).join(", ")}` : ""}
+- Recent commits:\n${recentCommits || "  (none)"}`;
+        }
+      } catch {
+        // Git context is best-effort — don't fail the query
+      }
+    }
+
     // Build a system prompt that clearly scopes the AI to the user's loaded project
     const projectSystemPrompt = globalProjectRoot
       ? `You are an AI coding assistant embedded in an IDE. The user has opened the project located at: ${globalProjectRoot}
@@ -268,7 +560,7 @@ When the user says "this app", "the project", "this codebase", or similar, they 
 
 Focus exclusively on the user's project. Use your tools to explore and understand it before answering questions about it.
 
-You also have flow management tools available. When the user asks you to create, modify, delete, list, or describe a flow, workflow, or pipeline, use the flow management tools (mcp__flow-tools__create_flow, mcp__flow-tools__update_flow, mcp__flow-tools__delete_flow, mcp__flow-tools__list_flows, mcp__flow-tools__get_flow). Flows are visual agent graphs with nodes and edges.`
+You also have flow management tools available. When the user asks you to create, modify, delete, list, or describe a flow, workflow, or pipeline, use the flow management tools (mcp__flow-tools__create_flow, mcp__flow-tools__update_flow, mcp__flow-tools__delete_flow, mcp__flow-tools__list_flows, mcp__flow-tools__get_flow). Flows are visual agent graphs with nodes and edges.${gitContext}`
       : undefined;
 
     const options: Options = {

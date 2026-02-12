@@ -16,6 +16,8 @@ interface UseWebSocketOptions {
   onContextRawResponse?: (nodeId: string, executionId: string, messages: unknown[]) => void;
   /** Called when the AI creates or updates a flow — for preview in chat */
   onFlowPreview?: (flow: FlowDefinition) => void;
+  /** Called when a git-related message is received from sidecar */
+  onGitMessage?: (msg: WSMessageFromSidecar) => void;
 }
 
 const SIDECAR_PORT = 9399;
@@ -38,7 +40,7 @@ function getToolLogSummary(name: string, args: Record<string, unknown>): string 
   }
 }
 
-export function useWebSocket({ onMessage, onStatusChange, onFlowEvent, onConnect, onLogEntry, onContextViewEvent, onContextClassification, onContextStateUpdate, onContextRawResponse, onFlowPreview }: UseWebSocketOptions) {
+export function useWebSocket({ onMessage, onStatusChange, onFlowEvent, onConnect, onLogEntry, onContextViewEvent, onContextClassification, onContextStateUpdate, onContextRawResponse, onFlowPreview, onGitMessage }: UseWebSocketOptions) {
   const wsRef = useRef<WebSocket | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<string>("disconnected");
   const reconnectAttempts = useRef(0);
@@ -55,6 +57,7 @@ export function useWebSocket({ onMessage, onStatusChange, onFlowEvent, onConnect
   const onContextStateUpdateRef = useRef(onContextStateUpdate);
   const onContextRawResponseRef = useRef(onContextRawResponse);
   const onFlowPreviewRef = useRef(onFlowPreview);
+  const onGitMessageRef = useRef(onGitMessage);
   onMessageRef.current = onMessage;
   onStatusChangeRef.current = onStatusChange;
   onFlowEventRef.current = onFlowEvent;
@@ -65,6 +68,7 @@ export function useWebSocket({ onMessage, onStatusChange, onFlowEvent, onConnect
   onContextStateUpdateRef.current = onContextStateUpdate;
   onContextRawResponseRef.current = onContextRawResponse;
   onFlowPreviewRef.current = onFlowPreview;
+  onGitMessageRef.current = onGitMessage;
 
   // Accumulator for streaming assistant messages
   const streamingMessage = useRef<ChatMessage | null>(null);
@@ -543,6 +547,20 @@ export function useWebSocket({ onMessage, onStatusChange, onFlowEvent, onConnect
         onContextRawResponseRef.current?.(raw.nodeId, raw.executionId, raw.messages);
         break;
       }
+
+      // ── Git messages ────────────────────────────────────────────────
+      case "git_status_response":
+      case "git_status_update":
+      case "git_diff_response":
+      case "git_log_response":
+      case "git_branches_response":
+      case "git_remotes_response":
+      case "git_error":
+      case "git_operation_complete":
+      case "git_commit_msg_response":
+      case "git_show_response":
+        onGitMessageRef.current?.(data);
+        break;
 
       // ── Flow tool requests from sidecar (AI agent) ─────────────────
       case "flow_tool_create":

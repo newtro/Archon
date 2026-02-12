@@ -1,5 +1,5 @@
-import { Cpu, Coins, Hash } from "lucide-react";
-import type { ChatMessage } from "../../lib/types";
+import { Cpu, Coins, Hash, GitBranch, ArrowUp, ArrowDown } from "lucide-react";
+import type { ChatMessage, GitStatusData } from "../../lib/types";
 import "./StatusBar.css";
 
 interface StatusBarProps {
@@ -8,9 +8,10 @@ interface StatusBarProps {
   messages: ChatMessage[];
   activeModel?: string;
   sidecarLatency?: number | null;
+  gitStatus?: GitStatusData | null;
 }
 
-export function StatusBar({ isConnected, connectionStatus, messages, activeModel, sidecarLatency }: StatusBarProps) {
+export function StatusBar({ isConnected, connectionStatus, messages, activeModel, sidecarLatency, gitStatus }: StatusBarProps) {
   const assistantMsgs = messages.filter((m) => m.role === "assistant" && !m.isStreaming);
   const totalTokensIn = assistantMsgs.reduce((s, m) => s + (m.tokensIn ?? 0), 0);
   const totalTokensOut = assistantMsgs.reduce((s, m) => s + (m.tokensOut ?? 0), 0);
@@ -18,6 +19,9 @@ export function StatusBar({ isConnected, connectionStatus, messages, activeModel
   const turnCount = assistantMsgs.length;
 
   const streaming = messages.find((m) => m.isStreaming);
+  const totalChanges = gitStatus
+    ? gitStatus.staged.length + gitStatus.unstaged.length + gitStatus.untracked.length
+    : 0;
 
   return (
     <footer className="status-bar">
@@ -37,6 +41,30 @@ export function StatusBar({ isConnected, connectionStatus, messages, activeModel
             <span className="status-text status-streaming">
               {streaming.model ?? activeModel ?? "Streaming"}
             </span>
+          </>
+        )}
+        {gitStatus?.isRepo && (
+          <>
+            <span className="status-divider" />
+            <span className="status-item status-git" title={`Branch: ${gitStatus.branch}`}>
+              <GitBranch size={11} />
+              <span>{gitStatus.branch}</span>
+            </span>
+            {gitStatus.ahead > 0 && (
+              <span className="status-item status-git-ahead" title={`${gitStatus.ahead} commit(s) ahead`}>
+                <ArrowUp size={10} />{gitStatus.ahead}
+              </span>
+            )}
+            {gitStatus.behind > 0 && (
+              <span className="status-item status-git-behind" title={`${gitStatus.behind} commit(s) behind`}>
+                <ArrowDown size={10} />{gitStatus.behind}
+              </span>
+            )}
+            {totalChanges > 0 && (
+              <span className="status-item status-git-changes" title={`${totalChanges} changed file(s)`}>
+                {totalChanges} changed
+              </span>
+            )}
           </>
         )}
       </div>

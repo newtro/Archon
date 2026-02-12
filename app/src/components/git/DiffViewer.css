@@ -1,0 +1,143 @@
+.diff-viewer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg-primary);
+}
+
+.diff-viewer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--space-3, 12px);
+  border-bottom: 1px solid var(--border, var(--border-primary));
+  height: 36px;
+  flex-shrink: 0;
+}
+
+.diff-viewer-tab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.diff-viewer-filename {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.diff-viewer-badge {
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--bg-tertiary);
+  padding: 1px 6px;
+  border-radius: var(--radius-sm, 4px);
+}
+
+.diff-viewer-stats {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+}
+
+.diff-stat--add {
+  color: #98c379;
+}
+
+.diff-stat--remove {
+  color: #e06c75;
+}
+
+.diff-viewer-content {
+  flex: 1;
+  overflow: auto;
+}
+
+.diff-viewer-pre {
+  margin: 0;
+  padding: 4px 0;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+/* ── Diff lines ──────────────────────────────────────────────── */
+
+.diff-line {
+  display: flex;
+  min-height: 21px;
+}
+
+.diff-line--add {
+  background: rgba(152, 195, 121, 0.10);
+}
+
+.diff-line--remove {
+  background: rgba(224, 108, 117, 0.10);
+}
+
+.diff-line--header {
+  background: rgba(97, 175, 239, 0.06);
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.diff-line--context {
+  background: transparent;
+}
+
+.diff-line:hover {
+  filter: brightness(1.1);
+}
+
+.diff-line-number {
+  width: 45px;
+  text-align: right;
+  padding: 0 6px;
+  color: var(--text-muted);
+  opacity: 0.5;
+  user-select: none;
+  flex-shrink: 0;
+  font-size: 12px;
+}
+
+.diff-line-prefix {
+  width: 16px;
+  text-align: center;
+  flex-shrink: 0;
+  user-select: none;
+  font-weight: 700;
+}
+
+.diff-line--add .diff-line-prefix {
+  color: #98c379;
+}
+
+.diff-line--remove .diff-line-prefix {
+  color: #e06c75;
+}
+
+.diff-line-content {
+  color: var(--text-primary);
+  padding-right: 16px;
+  white-space: pre;
+  tab-size: 2;
+}
+
+.diff-line--header .diff-line-content {
+  color: var(--text-muted);
+}
+
+/* ── Empty state ─────────────────────────────────────────────── */
+
+.diff-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-style: italic;
+}

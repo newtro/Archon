@@ -102,6 +102,60 @@ export interface HistoryMessage {
   content: string;
 }
 
+/** Git status types */
+
+export interface GitFileStatus {
+  path: string;
+  status: string;
+  from?: string;
+}
+
+export interface GitStatusData {
+  isRepo: boolean;
+  branch: string;
+  tracking: string | null;
+  ahead: number;
+  behind: number;
+  staged: GitFileStatus[];
+  unstaged: GitFileStatus[];
+  untracked: GitFileStatus[];
+}
+
+export interface GitLogEntry {
+  hash: string;
+  hashShort: string;
+  author: string;
+  date: string;
+  message: string;
+  refs: string;
+}
+
+export interface GitLogData {
+  entries: GitLogEntry[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface GitBranchInfo {
+  name: string;
+  current: boolean;
+  commit: string;
+  label: string;
+}
+
+export interface GitBranchData {
+  current: string;
+  local: GitBranchInfo[];
+  remote: string[];
+}
+
+export interface GitRemoteInfo {
+  name: string;
+  fetchUrl: string;
+  pushUrl: string;
+}
+
 /** WebSocket message types between frontend and sidecar */
 
 export type WSMessageToSidecar =
@@ -112,7 +166,28 @@ export type WSMessageToSidecar =
   | { type: "ping" }
   | { type: "execute_flow"; flow: unknown; input: string; history?: HistoryMessage[]; sessionId?: string }
   | { type: "cancel_flow"; executionId: string }
-  | { type: "get_context_raw"; executionId: string; nodeId: string };
+  | { type: "get_context_raw"; executionId: string; nodeId: string }
+  // Git operations
+  | { type: "git_status" }
+  | { type: "git_diff"; file?: string; staged?: boolean }
+  | { type: "git_log"; page: number; pageSize: number }
+  | { type: "git_branches" }
+  | { type: "git_stage"; files: string[] }
+  | { type: "git_unstage"; files: string[] }
+  | { type: "git_commit"; message: string }
+  | { type: "git_push"; remote?: string; branch?: string }
+  | { type: "git_pull"; remote?: string; branch?: string }
+  | { type: "git_checkout"; branch: string }
+  | { type: "git_create_branch"; name: string; startPoint?: string }
+  | { type: "git_remotes" }
+  | { type: "git_add_remote"; name: string; url: string }
+  | { type: "git_remove_remote"; name: string }
+  | { type: "git_init" }
+  | { type: "git_discard"; files: string[] }
+  | { type: "git_start_watching" }
+  | { type: "git_stop_watching" }
+  | { type: "git_generate_commit_msg" }
+  | { type: "git_show"; hash: string };
 
 /** Context Agent transparency events */
 export type ContextAgentEvent =
@@ -250,6 +325,17 @@ export type WSMessageFromSidecar =
   | { type: "error"; message: string }
   | { type: "status"; status: string }
   | { type: "pong" }
+  // Git responses
+  | { type: "git_status_response"; data: GitStatusData }
+  | { type: "git_diff_response"; data: string }
+  | { type: "git_log_response"; data: GitLogData }
+  | { type: "git_branches_response"; data: GitBranchData }
+  | { type: "git_remotes_response"; data: GitRemoteInfo[] }
+  | { type: "git_error"; error: string; command: string }
+  | { type: "git_status_update"; data: GitStatusData }
+  | { type: "git_operation_complete"; operation: string; success: boolean; message?: string }
+  | { type: "git_commit_msg_response"; message: string }
+  | { type: "git_show_response"; data: string }
   // Context Agent events
   | { type: "context_agent_event"; sessionId: string; event: ContextAgentEvent }
   // Context View events

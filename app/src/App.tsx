@@ -3,6 +3,8 @@ import { FileText } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { ChatPanel } from "./components/chat/ChatPanel";
+import { GitPanel } from "./components/git/GitPanel";
+import { DiffViewer } from "./components/git/DiffViewer";
 import { Sidebar, type SidebarView } from "./components/layout/Sidebar";
 import { StatusBar } from "./components/layout/StatusBar";
 import { TitleBar } from "./components/layout/TitleBar";
@@ -25,7 +27,7 @@ import { getSetting, setSetting } from "./lib/store";
 import { listFlows, loadFlow } from "./lib/flow-storage";
 import { createSession, saveMessage, loadSessionMessages, deleteSession as deleteSessionDb } from "./lib/chat-storage";
 import type { FlowDefinition } from "./lib/flow-types";
-import type { ChatMessage, WSMessageToSidecar, FlowSummary, FlowExecutionEvent, RecentProject, ImageAttachment, LogEntry, LogEntryEvent, HistoryMessage } from "./lib/types";
+import type { ChatMessage, WSMessageToSidecar, WSMessageFromSidecar, GitStatusData, FlowSummary, FlowExecutionEvent, RecentProject, ImageAttachment, LogEntry, LogEntryEvent, HistoryMessage } from "./lib/types";
 
 function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -36,6 +38,13 @@ function App() {
   const [activeModel, setActiveModel] = useState<string>("sonnet");
   const [pendingReview, setPendingReview] = useState<HumanReviewRequest | null>(null);
   const [publishingFlow, setPublishingFlow] = useState<import("./lib/flow-types").FlowDefinition | null>(null);
+
+  // Git message state — latest message from sidecar for the GitPanel
+  const [lastGitMessage, setLastGitMessage] = useState<WSMessageFromSidecar | null>(null);
+  const [gitStatus, setGitStatus] = useState<GitStatusData | null>(null);
+
+  // Track diff content for the diff viewer
+  const [gitDiff, setGitDiff] = useState<{ path: string; diff: string; staged: boolean } | null>(null);
 
   // Startup / recent projects
   const [recentProjects, setRecentProjects] = useState<RecentProject[]>([]);
@@ -235,6 +244,20 @@ function App() {
       // AI created/modified a flow — show preview and refresh flow list
       setPreviewFlow(flow);
       refreshFlows();
+    },
+    onGitMessage: (msg) => {
+      setLastGitMessage(msg);
+      // Extract git status for StatusBar
+      if (msg.type === "git_status_response" || msg.type === "git_status_update") {
+        setGitStatus(msg.data);
+      }
+      // Extract diff for diff viewer (file diff or commit diff)
+      if (msg.type === "git_diff_response") {
+        setGitDiff((prev) => prev ? { ...prev, diff: msg.data } : null);
+      }
+      if (msg.type === "git_show_response") {
+        setGitDiff((prev) => prev ? { ...prev, diff: msg.data } : null);
+      }
     },
     onConnect: (directSend) => {
       // Send persisted API key to sidecar immediately on WebSocket open
@@ -578,7 +601,20 @@ function App() {
         return (
           <div className="files-layout">
             <div className="files-sidebar">
-              <FileTreePanel onFileSelect={handleFileSelect} onProjectRootChange={handleProjectRootChange} initialRootPath={projectRoot} />
+              <FileTreePanel
+                onFileSelect={handleFileSelect}
+                onProjectRootChange={handleProjectRootChange}
+                initialRootPath={projectRoot}
+                gitStatus={gitStatus}
+                onGitStage={(files) => send({ type: "git_stage", files })}
+                onGitUnstage={(files) => send({ type: "git_unstage", files })}
+                onGitDiscard={(files) => send({ type: "git_discard", files })}
+                onGitViewDiff={(path, staged) => {
+                  setActiveView("git");
+                  setGitDiff({ path, diff: "", staged });
+                  send({ type: "git_diff", file: path, staged });
+                }}
+              />
             </div>
             <div className="files-main">
               {openFile ? (
@@ -587,6 +623,37 @@ function App() {
                 <div className="files-empty">
                   <FileText size={40} strokeWidth={1.5} style={{ opacity: 0.2 }} />
                   <p className="files-empty-text">Select a file to view</p>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+
+      case "git":
+        return (
+          <div className="git-layout">
+            <div className="git-sidebar">
+              <GitPanel
+                send={send}
+                isConnected={isConnected}
+                onGitMessage={lastGitMessage}
+                onViewDiff={(path, staged) => {
+                  setGitDiff({ path, diff: "", staged });
+                  send({ type: "git_diff", file: path, staged });
+                }}
+                onViewCommitDiff={(hash, message) => {
+                  setGitDiff({ path: `commit: ${hash.slice(0, 8)} — ${message}`, diff: "", staged: false });
+                  send({ type: "git_show", hash });
+                }}
+              />
+            </div>
+            <div className="git-main">
+              {gitDiff && gitDiff.diff ? (
+                <DiffViewer filePath={gitDiff.path} diff={gitDiff.diff} />
+              ) : (
+                <div className="files-empty">
+                  <FileText size={40} strokeWidth={1.5} style={{ opacity: 0.2 }} />
+                  <p className="files-empty-text">Click a file to view diff</p>
                 </div>
               )}
             </div>
@@ -626,6 +693,7 @@ function App() {
         messages={messages}
         activeModel={activeModel}
         sidecarLatency={sidecarHealth.latencyMs}
+        gitStatus={gitStatus}
       />
       {pendingReview && (
         <HumanReviewModal

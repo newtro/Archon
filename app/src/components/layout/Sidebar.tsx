@@ -1,7 +1,7 @@
-import { MessageSquare, Workflow, FolderOpen, Settings, ScrollText, Globe } from "lucide-react";
+import { MessageSquare, Workflow, FolderOpen, Settings, ScrollText, Globe, GitBranch } from "lucide-react";
 import "./Sidebar.css";
 
-export type SidebarView = "startup" | "chat" | "flows" | "files" | "logs" | "registry" | "settings";
+export type SidebarView = "startup" | "chat" | "flows" | "files" | "git" | "logs" | "registry" | "settings";
 
 interface SidebarProps {
   activeView: SidebarView;
@@ -12,6 +12,7 @@ const NAV_ITEMS: Array<{ view: SidebarView; icon: typeof MessageSquare; label: s
   { view: "chat", icon: MessageSquare, label: "Chat" },
   { view: "flows", icon: Workflow, label: "Flows" },
   { view: "files", icon: FolderOpen, label: "Files" },
+  { view: "git", icon: GitBranch, label: "Source Control" },
   { view: "logs", icon: ScrollText, label: "Logs" },
   { view: "registry", icon: Globe, label: "Registry" },
 ];

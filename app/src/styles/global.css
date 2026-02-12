@@ -159,6 +159,24 @@ code, pre, .mono {
   font-size: 13px;
 }
 
+/* Git view layout */
+.git-layout {
+  display: flex;
+  height: 100%;
+}
+
+.git-sidebar {
+  width: 300px;
+  border-right: 1px solid var(--border-primary);
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.git-main {
+  flex: 1;
+  overflow: hidden;
+}
+
 /* Placeholder panel for unbuilt views */
 .placeholder-panel {
   display: flex;

@@ -69,3 +69,19 @@
   font-family: var(--font-mono);
   font-size: 10px;
 }
+
+.status-git {
+  color: var(--accent, #61afef);
+}
+
+.status-git-ahead {
+  color: var(--accent-green, #98c379);
+}
+
+.status-git-behind {
+  color: var(--accent-yellow, #e5c07b);
+}
+
+.status-git-changes {
+  color: var(--accent-yellow, #e5c07b);
+}
