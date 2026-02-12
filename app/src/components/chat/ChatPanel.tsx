@@ -1,15 +1,15 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
-import { MessageCircle, Layers, SquarePen, History, Trash2 } from "lucide-react";
+import { MessageCircle, Layers, SquarePen, History, Trash2, Bug } from "lucide-react";
 import { ChatMessage as ChatMessageComponent } from "./ChatMessage";
 import { ChatInput } from "./ChatInput";
 import { useDensity, type DensityMode } from "../../contexts/DensityContext";
 import { listSessions } from "../../lib/chat-storage";
-import type { ChatMessage, ChatSession, FlowSummary } from "../../lib/types";
+import type { ChatMessage, ChatSession, FlowSummary, ImageAttachment } from "../../lib/types";
 import "./ChatPanel.css";
 
 interface ChatPanelProps {
   messages: ChatMessage[];
-  onSendMessage: (text: string) => void;
+  onSendMessage: (text: string, images?: ImageAttachment[]) => void;
   isConnected: boolean;
   flows?: FlowSummary[];
   selectedFlowId?: string | null;
@@ -19,6 +19,8 @@ interface ChatPanelProps {
   sessionId?: string | null;
   onLoadSession?: (id: string) => void;
   onDeleteSession?: (id: string) => void;
+  debugActive?: boolean;
+  onToggleDebug?: () => void;
 }
 
 const DENSITY_LABELS: Record<DensityMode, string> = {
@@ -39,7 +41,7 @@ function timeAgo(ts: number): string {
   return new Date(ts).toLocaleDateString();
 }
 
-export function ChatPanel({ messages, onSendMessage, isConnected, flows, selectedFlowId, onFlowSelect, isFlowRunning, onNewChat, sessionId, onLoadSession, onDeleteSession }: ChatPanelProps) {
+export function ChatPanel({ messages, onSendMessage, isConnected, flows, selectedFlowId, onFlowSelect, isFlowRunning, onNewChat, sessionId, onLoadSession, onDeleteSession, debugActive, onToggleDebug }: ChatPanelProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
@@ -162,6 +164,15 @@ export function ChatPanel({ messages, onSendMessage, isConnected, flows, selecte
             title="New chat"
           >
             <SquarePen size={14} />
+          </button>
+        )}
+        {onToggleDebug && (
+          <button
+            className={`chat-header-btn ${debugActive ? "active" : ""}`}
+            onClick={onToggleDebug}
+            title="Toggle debug log panel"
+          >
+            <Bug size={14} />
           </button>
         )}
         <button

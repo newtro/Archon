@@ -1,0 +1,160 @@
+.flow-detail-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+
+.flow-detail-modal {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-lg);
+  width: 520px;
+  max-width: 90vw;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+}
+
+.flow-detail-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border-primary);
+}
+
+.flow-detail-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.flow-detail-name {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.flow-detail-close {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+}
+
+.flow-detail-close:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.flow-detail-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.flow-detail-meta-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.flow-detail-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px;
+}
+
+.flow-detail-description {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin: 0 0 16px;
+}
+
+.flow-detail-section {
+  margin-bottom: 14px;
+}
+
+.flow-detail-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 8px;
+}
+
+.flow-detail-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.flow-detail-tag {
+  padding: 2px 8px;
+  border-radius: 8px;
+  background: var(--bg-tertiary);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.flow-detail-node-types {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.flow-detail-node-chip {
+  padding: 2px 8px;
+  border-radius: 8px;
+  background: var(--bg-tertiary);
+  border: 1px solid;
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.flow-detail-footer {
+  padding: 14px 20px;
+  border-top: 1px solid var(--border-primary);
+  display: flex;
+  justify-content: flex-end;
+}
+
+.flow-detail-install-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  background: var(--accent-indigo);
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 500;
+  color: #fff;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.flow-detail-install-btn:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.flow-detail-install-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.flow-detail-installed-badge {
+  font-size: 13px;
+  color: #22c55e;
+  font-weight: 500;
+}

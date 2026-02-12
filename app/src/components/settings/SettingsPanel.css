@@ -176,6 +176,48 @@
   line-height: 1.5;
 }
 
+/* Settings link */
+.settings-link {
+  color: var(--accent);
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  font-size: inherit;
+}
+
+.settings-link:hover {
+  text-decoration: underline;
+}
+
+.settings-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-weight: 500;
+  margin-bottom: 4px;
+}
+
+/* Repo config */
+.repo-config-group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.repo-config-group .settings-input {
+  flex: 1;
+}
+
+.repo-separator {
+  font-size: 14px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
 /* About section */
 .settings-about {
   display: flex;

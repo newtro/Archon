@@ -21,6 +21,12 @@ export interface SessionData {
   sessionId: string;
   taskDescription: string;
   messages: SessionMessage[];
+  /** Context Agent structured state (persisted across turns) */
+  contextState?: Record<string, unknown>;
+  /** SDK session ID for the Context Agent's own Sonnet session */
+  sdkSessionId?: string;
+  /** Context Agent configuration overrides */
+  contextAgentConfig?: Record<string, unknown>;
   flowState?: Record<string, unknown>;
   createdAt: number;
   updatedAt: number;
@@ -152,6 +158,44 @@ export function listSessions(): Array<{
   updatedAt: number;
 }> {
   return readIndex().sessions;
+}
+
+/**
+ * Search sessions by keyword in task description.
+ * Returns matching session metadata sorted by relevance (most recent first).
+ */
+export function searchSessions(keywords: string[]): Array<{
+  sessionId: string;
+  taskDescription: string;
+  createdAt: number;
+  updatedAt: number;
+  matchScore: number;
+}> {
+  const index = readIndex();
+  const results: Array<{
+    sessionId: string;
+    taskDescription: string;
+    createdAt: number;
+    updatedAt: number;
+    matchScore: number;
+  }> = [];
+
+  for (const entry of index.sessions) {
+    const desc = entry.taskDescription.toLowerCase();
+    let score = 0;
+    for (const kw of keywords) {
+      if (desc.includes(kw.toLowerCase())) {
+        score++;
+      }
+    }
+    if (score > 0) {
+      results.push({ ...entry, matchScore: score });
+    }
+  }
+
+  // Sort by match score (desc), then by updatedAt (desc)
+  results.sort((a, b) => b.matchScore - a.matchScore || b.updatedAt - a.updatedAt);
+  return results;
 }
 
 /**

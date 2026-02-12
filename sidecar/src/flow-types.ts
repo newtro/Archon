@@ -41,6 +41,19 @@ export interface FlowDefinition {
   edges: SerializedEdge[];
   createdAt: number;
   updatedAt: number;
+  /** Context Agent config for multi-turn orchestration */
+  contextAgentConfig?: {
+    enabled: boolean;
+    model?: "haiku" | "sonnet" | "opus";
+    systemPrompt?: string;
+    extendedContext?: boolean;
+  };
+}
+
+/** Lightweight conversation history message */
+export interface HistoryMessage {
+  role: "user" | "assistant";
+  content: string;
 }
 
 /** Execution state tracked across the flow run */
@@ -54,6 +67,10 @@ export interface FlowState {
   turn: number;
   /** Project context output from project-context nodes — injected into LLM systemPrompts */
   projectContext?: string;
+  /** Conversation history from the chat session — injected into LLM node prompts */
+  conversationHistory?: HistoryMessage[];
+  /** Context Agent instance (set when a session has a Context Agent) */
+  contextAgent?: unknown;
 }
 
 export interface NodeOutput {

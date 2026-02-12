@@ -12,9 +12,10 @@ interface FlowDesignerProps {
   onRunFlow?: (flow: FlowDefinition, input: string) => void;
   onCancelFlow?: () => void;
   onResetFlow?: () => void;
+  onPublishFlow?: (flow: FlowDefinition) => void;
 }
 
-export function FlowDesigner({ execState, onRunFlow, onCancelFlow, onResetFlow }: FlowDesignerProps) {
+export function FlowDesigner({ execState, onRunFlow, onCancelFlow, onResetFlow, onPublishFlow }: FlowDesignerProps) {
   const [flows, setFlows] = useState<Array<{ id: string; name: string; description: string; updatedAt: number }>>([]);
   const [activeFlow, setActiveFlow] = useState<FlowDefinition | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -115,6 +116,7 @@ export function FlowDesigner({ execState, onRunFlow, onCancelFlow, onResetFlow }
             onRunFlow={onRunFlow ? (input) => onRunFlow(activeFlow, input) : undefined}
             onCancelFlow={onCancelFlow}
             onResetFlow={onResetFlow}
+            onPublishFlow={onPublishFlow}
           />
         </div>
       </ReactFlowProvider>

@@ -1,8 +1,9 @@
 import { WebSocket } from "ws";
-import { query, type Options, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import { query, type Options, type SDKMessage, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { executeFlow, cancelExecution, resolveHumanReview } from "./flow-engine.js";
 import type { FlowDefinition } from "./flow-types.js";
 import { mcpManager } from "./mcp-manager.js";
+import { ContextAgentManager } from "./context-agent.js";
 
 // Initialize MCP manager (server configs will be provided by the frontend)
 console.log(`[agent] MCP manager ready (${mcpManager.listServers().length} servers)`);
@@ -17,9 +18,24 @@ export function getGlobalProjectRoot(): string | null {
   return globalProjectRoot;
 }
 
+interface ImageAttachment {
+  id: string;
+  dataUrl: string;
+  mimeType: string;
+  name: string;
+}
+
+interface HistoryMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
 interface UserMessage {
   type: "user_message";
   content: string;
+  images?: ImageAttachment[];
+  history?: HistoryMessage[];
+  sessionId?: string;
 }
 
 interface SetApiKeyMessage {
@@ -39,6 +55,8 @@ interface ExecuteFlowMessage {
   type: "execute_flow";
   flow: FlowDefinition;
   input: string;
+  history?: HistoryMessage[];
+  sessionId?: string;
 }
 
 interface CancelFlowMessage {
@@ -76,6 +94,12 @@ function send(ws: WebSocket, data: unknown): void {
 // Track active queries for cancellation
 let activeAbortController: AbortController | null = null;
 
+// Map frontend session IDs to SDK session IDs for conversation resumption
+const sdkSessionMap = new Map<string, string>();
+
+// Context Agent manager — one agent per session, used for flow execution
+const contextManager = new ContextAgentManager();
+
 export async function handleMessage(
   ws: WebSocket,
   message: IncomingMessage
@@ -106,14 +130,18 @@ export async function handleMessage(
       break;
 
     case "user_message":
-      await handleUserMessage(ws, message.content);
+      await handleUserMessage(ws, message.content, message.images, message.history, message.sessionId);
       break;
 
     case "execute_flow":
       if (!apiKey) {
         send(ws, { type: "error", message: "No API key configured." });
       } else {
-        executeFlow(ws, message.flow, message.input, apiKey).catch((err) => {
+        // Get or create a Context Agent for this session (used for multi-turn flow context)
+        const contextAgent = message.sessionId
+          ? contextManager.getOrCreate(message.sessionId)
+          : undefined;
+        executeFlow(ws, message.flow, message.input, apiKey, message.history, message.sessionId, contextAgent).catch((err) => {
           console.error("[agent] Flow execution error:", err);
         });
       }
@@ -129,7 +157,38 @@ export async function handleMessage(
   }
 }
 
-async function handleUserMessage(ws: WebSocket, content: string): Promise<void> {
+function parseDataUrl(dataUrl: string): { mediaType: string; data: string } | null {
+  const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+  if (!match) return null;
+  return { mediaType: match[1], data: match[2] };
+}
+
+/**
+ * Format conversation history into a text block for inclusion in the prompt.
+ * Returns empty string if no history is present.
+ */
+function formatHistory(history?: HistoryMessage[]): string {
+  if (!history || history.length === 0) return "";
+
+  const turns = history.map((m) => {
+    const role = m.role === "user" ? "User" : "Assistant";
+    return `${role}: ${m.content}`;
+  }).join("\n\n");
+
+  return `<conversation_history>
+${turns}
+</conversation_history>
+
+`;
+}
+
+async function handleUserMessage(
+  ws: WebSocket,
+  content: string,
+  images?: ImageAttachment[],
+  history?: HistoryMessage[],
+  sessionId?: string,
+): Promise<void> {
   if (!apiKey) {
     send(ws, {
       type: "error",
@@ -146,6 +205,9 @@ async function handleUserMessage(ws: WebSocket, content: string): Promise<void> 
 
     activeAbortController = new AbortController();
 
+    // Check if we have a prior SDK session to resume (multi-turn context)
+    const sdkSid = sessionId ? sdkSessionMap.get(sessionId) : undefined;
+
     const options: Options = {
       model: "sonnet",
       permissionMode: "bypassPermissions",
@@ -159,21 +221,68 @@ async function handleUserMessage(ws: WebSocket, content: string): Promise<void> 
       // Enable streaming partial messages
       includePartialMessages: true,
       abortController: activeAbortController,
+      // SDK session management: resume if we have a prior session, otherwise persist
+      ...(sdkSid
+        ? { resume: sdkSid }
+        : { persistSession: true }),
     };
 
-    // Use the Claude Agent SDK to handle the message
-    for await (const event of query({ prompt: content, options })) {
-      handleSDKEvent(ws, messageId, event);
+    // When resuming an SDK session, send just the raw message (SDK has full history).
+    // When starting fresh with no SDK session, use history prepend as fallback.
+    let effectiveContent = content;
+    if (!sdkSid) {
+      const historyPrefix = formatHistory(history);
+      if (historyPrefix) {
+        effectiveContent = `${historyPrefix}${content}`;
+      }
     }
 
-    send(ws, {
-      type: "assistant_text_done",
-      messageId,
-      model: "sonnet",
-      tokensIn: 0,
-      tokensOut: 0,
-      costUsd: 0,
-    });
+    // Build the prompt — either a simple string or multi-part with images
+    let prompt: string | AsyncIterable<SDKUserMessage>;
+
+    if (images && images.length > 0) {
+      // Build multi-part content blocks for the Anthropic API
+      const contentBlocks: Array<Record<string, unknown>> = [];
+
+      for (const img of images) {
+        const parsed = parseDataUrl(img.dataUrl);
+        if (parsed) {
+          contentBlocks.push({
+            type: "image",
+            source: {
+              type: "base64",
+              media_type: parsed.mediaType,
+              data: parsed.data,
+            },
+          });
+        }
+      }
+
+      if (effectiveContent) {
+        contentBlocks.push({ type: "text", text: effectiveContent });
+      }
+
+      // Wrap as an async iterable yielding a single SDKUserMessage
+      async function* messageGenerator(): AsyncGenerator<SDKUserMessage> {
+        yield {
+          type: "user",
+          message: { role: "user", content: contentBlocks },
+          parent_tool_use_id: null,
+          session_id: "",
+        } as SDKUserMessage;
+      }
+      prompt = messageGenerator();
+    } else {
+      prompt = effectiveContent;
+    }
+
+    // Track tool call start times for duration calculation
+    const toolStartTimes = new Map<string, number>();
+
+    // Use the Claude Agent SDK to handle the message
+    for await (const event of query({ prompt, options })) {
+      handleSDKEvent(ws, messageId, event, sessionId, toolStartTimes);
+    }
   } catch (err) {
     console.error("[agent] Error:", err);
 
@@ -195,11 +304,77 @@ async function handleUserMessage(ws: WebSocket, content: string): Promise<void> 
   }
 }
 
-function handleSDKEvent(ws: WebSocket, messageId: string, event: SDKMessage): void {
+/** Summarize an SDK event for debug logging */
+function summarizeSDKEvent(event: SDKMessage): string {
+  const e = event as Record<string, unknown>;
+  switch (event.type) {
+    case "assistant": {
+      const content = (e.message as Record<string, unknown>)?.content;
+      if (Array.isArray(content)) {
+        const blockTypes = content.map((b: Record<string, unknown>) => b.type).join(", ");
+        return `blocks: [${blockTypes}]`;
+      }
+      return "assistant message";
+    }
+    case "user": {
+      const parentId = e.parent_tool_use_id as string | null;
+      if (parentId) return `tool_result for ${parentId}`;
+      return "user message";
+    }
+    case "result":
+      return `${e.subtype} | turns=${e.num_turns} | cost=$${(e.total_cost_usd as number)?.toFixed(4) ?? "?"}`;
+    case "system":
+      return `${e.subtype}${e.model ? ` | model=${e.model}` : ""}${e.tools ? ` | tools=${(e.tools as string[]).length}` : ""}`;
+    case "tool_progress":
+      return `${e.tool_name} (${e.tool_use_id}) ${e.elapsed_time_seconds}s`;
+    case "tool_use_summary":
+      return `${(e.preceding_tool_use_ids as string[])?.length ?? 0} tools: ${(e.summary as string)?.slice(0, 200)}`;
+    default:
+      return JSON.stringify(e, null, 2).slice(0, 300);
+  }
+}
+
+/** Send a debug log entry to the frontend */
+function emitDebugLog(ws: WebSocket, source: string, message: string, detail?: string): void {
+  send(ws, {
+    type: "debug_log",
+    entry: {
+      id: `dbg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      timestamp: Date.now(),
+      level: "debug",
+      source,
+      message,
+      detail: detail?.slice(0, 2000),
+      status: "complete",
+    },
+  });
+}
+
+function handleSDKEvent(ws: WebSocket, messageId: string, event: SDKMessage, frontendSessionId?: string, toolStartTimes?: Map<string, number>): void {
+  // Debug log every event type
+  const eventType = event.type;
+  const subtype = (event as Record<string, unknown>).subtype as string | undefined;
+  const label = subtype ? `${eventType}:${subtype}` : eventType;
+
+  // Skip stream_event text deltas from debug log (too noisy)
+  if (eventType !== "stream_event") {
+    const debugDetail = summarizeSDKEvent(event);
+    console.log(`[sdk-event] ${label}${debugDetail ? ` | ${debugDetail}` : ""}`);
+    emitDebugLog(ws, `sdk:${label}`, debugDetail || label);
+  }
+
   switch (event.type) {
     case "stream_event": {
       // SDKPartialAssistantMessage — streaming deltas
       const streamEvent = event.event;
+
+      // Log non-text stream events for debug (content_block_start, content_block_stop, etc.)
+      if (streamEvent.type !== "content_block_delta") {
+        const streamDetail = JSON.stringify(streamEvent, null, 2).slice(0, 500);
+        console.log(`[sdk-event] stream_event:${streamEvent.type}`);
+        emitDebugLog(ws, `sdk:stream:${streamEvent.type}`, streamDetail);
+      }
+
       if (
         streamEvent.type === "content_block_delta" &&
         "delta" in streamEvent &&
@@ -220,12 +395,18 @@ function handleSDKEvent(ws: WebSocket, messageId: string, event: SDKMessage): vo
       if (event.message?.content) {
         for (const block of event.message.content) {
           if (block.type === "tool_use") {
+            const startedAt = Date.now();
+            toolStartTimes?.set(block.id, startedAt);
             send(ws, {
               type: "tool_call_start",
               messageId,
-              toolCallId: block.id,
-              name: block.name,
-              args: block.input as Record<string, unknown>,
+              toolCall: {
+                id: block.id,
+                name: block.name,
+                args: block.input as Record<string, unknown>,
+                status: "loading" as const,
+                startedAt,
+              },
             });
           }
         }
@@ -233,9 +414,62 @@ function handleSDKEvent(ws: WebSocket, messageId: string, event: SDKMessage): vo
       break;
     }
 
+    case "user": {
+      // SDKUserMessage — tool result after SDK executed a tool
+      if (event.parent_tool_use_id) {
+        let resultText = "";
+        let isError = false;
+
+        // Extract result from tool_use_result (raw result from tool execution)
+        const raw = (event as Record<string, unknown>).tool_use_result;
+        if (typeof raw === "string") {
+          resultText = raw;
+        } else if (raw != null) {
+          resultText = JSON.stringify(raw, null, 2);
+        }
+
+        // Check message.content for is_error flag and fallback result extraction
+        const msgContent = (event.message as Record<string, unknown>)?.content;
+        if (Array.isArray(msgContent)) {
+          for (const block of msgContent) {
+            const b = block as Record<string, unknown>;
+            if (b.type === "tool_result" && b.tool_use_id === event.parent_tool_use_id) {
+              if (b.is_error) isError = true;
+              if (!resultText && b.content != null) {
+                resultText = typeof b.content === "string"
+                  ? b.content
+                  : JSON.stringify(b.content, null, 2);
+              }
+            }
+          }
+        }
+
+        const startTime = toolStartTimes?.get(event.parent_tool_use_id);
+        const durationMs = startTime ? Date.now() - startTime : 0;
+        toolStartTimes?.delete(event.parent_tool_use_id);
+
+        send(ws, {
+          type: "tool_call_done",
+          messageId,
+          toolCallId: event.parent_tool_use_id,
+          result: resultText,
+          status: isError ? ("error" as const) : ("success" as const),
+          durationMs,
+        });
+      }
+      break;
+    }
+
     case "result": {
       // SDKResultMessage — final result with cost and usage
       if (event.subtype === "success") {
+        // Capture SDK session ID for future resume (multi-turn context)
+        const resultSessionId = (event as Record<string, unknown>).session_id as string | undefined;
+        if (resultSessionId && frontendSessionId) {
+          sdkSessionMap.set(frontendSessionId, resultSessionId);
+          console.log(`[agent] SDK session mapped: ${frontendSessionId} -> ${resultSessionId}`);
+        }
+
         send(ws, {
           type: "assistant_text_done",
           messageId,

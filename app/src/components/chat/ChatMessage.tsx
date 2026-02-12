@@ -74,6 +74,15 @@ export function ChatMessage({ message }: ChatMessageProps) {
         </div>
       )}
 
+      {/* Image attachments */}
+      {message.images && message.images.length > 0 && (
+        <div className="message-images">
+          {message.images.map((img) => (
+            <img key={img.id} src={img.dataUrl} alt={img.name} />
+          ))}
+        </div>
+      )}
+
       {/* Message content */}
       {message.content && (
         <div className="message-content">

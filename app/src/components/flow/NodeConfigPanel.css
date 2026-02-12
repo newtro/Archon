@@ -239,6 +239,71 @@
   color: var(--text-primary);
 }
 
+/* ── Node Documentation ────────────────────────────────────── */
+
+.node-docs {
+  border-top: 1px solid var(--border-primary);
+  padding: 0;
+}
+
+.node-docs-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 10px 12px;
+  background: none;
+  border: none;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+
+.node-docs-toggle:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.node-docs-chevron {
+  margin-left: auto;
+  transition: transform 0.2s;
+}
+
+.node-docs-chevron--open {
+  transform: rotate(180deg);
+}
+
+.node-docs-content {
+  padding: 0 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.node-docs-section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.node-docs-heading {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.node-docs-body {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-muted);
+  margin: 0;
+}
+
 /* ── Footer ─────────────────────────────────────────────────── */
 
 .node-config-footer {

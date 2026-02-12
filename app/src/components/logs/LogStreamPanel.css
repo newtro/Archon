@@ -135,12 +135,17 @@
   font-size: 13px;
 }
 
+/* ── Entry Wrapper ──────────────────────────────────────────── */
+
+.log-entry-wrapper {
+  border-bottom: 1px solid var(--border-secondary);
+}
+
 .log-entry {
   display: flex;
   align-items: baseline;
   gap: 8px;
   padding: 2px 12px;
-  border-bottom: 1px solid var(--border-secondary);
   line-height: 1.6;
   transition: background 0.1s;
 }
@@ -152,6 +157,65 @@
 .log-entry.log-error {
   background: rgba(239, 68, 68, 0.04);
 }
+
+.log-entry.log-debug {
+  opacity: 0.7;
+}
+
+/* ── Expandable ─────────────────────────────────────────────── */
+
+.log-expandable {
+  cursor: pointer;
+}
+
+.log-expand-icon {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+  width: 14px;
+}
+
+/* ── Pending / Spinner ──────────────────────────────────────── */
+
+.log-pending {
+  opacity: 0.75;
+}
+
+.log-spinner {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  color: var(--accent-indigo);
+  animation: log-spin 1.2s linear infinite;
+}
+
+@keyframes log-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* ── Detail Expansion ───────────────────────────────────────── */
+
+.log-detail {
+  background: var(--bg-tertiary);
+  border-top: 1px solid var(--border-secondary);
+  padding: 8px 12px 8px 42px;
+  max-height: 300px;
+  overflow: auto;
+}
+
+.log-detail-content {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-all;
+  line-height: 1.5;
+}
+
+/* ── Entry Fields ───────────────────────────────────────────── */
 
 .log-time {
   color: var(--text-muted);
@@ -165,14 +229,14 @@
   text-transform: uppercase;
   letter-spacing: 0.5px;
   flex-shrink: 0;
-  width: 36px;
+  width: 42px;
 }
 
 .log-source {
   color: var(--accent-indigo);
   font-weight: 600;
   flex-shrink: 0;
-  max-width: 80px;
+  max-width: 100px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

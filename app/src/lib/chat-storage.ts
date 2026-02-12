@@ -27,6 +27,8 @@ async function initChatSchema(db: Database): Promise<void> {
       FOREIGN KEY(session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE
     )
   `);
+  // Migration: add images column for existing databases
+  await db.execute("ALTER TABLE chat_messages ADD COLUMN images TEXT").catch(() => {});
 }
 
 registerSchema(initChatSchema);
@@ -92,15 +94,16 @@ export async function deleteSession(id: string): Promise<void> {
 export async function saveMessage(sessionId: string, msg: ChatMessage): Promise<void> {
   const db = await getDb();
   await db.execute(
-    `INSERT INTO chat_messages (id, session_id, role, content, timestamp, model, tokens_in, tokens_out, cost_usd, tool_calls, thinking)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO chat_messages (id, session_id, role, content, timestamp, model, tokens_in, tokens_out, cost_usd, tool_calls, thinking, images)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        content = excluded.content,
        tokens_in = excluded.tokens_in,
        tokens_out = excluded.tokens_out,
        cost_usd = excluded.cost_usd,
        tool_calls = excluded.tool_calls,
-       thinking = excluded.thinking`,
+       thinking = excluded.thinking,
+       images = excluded.images`,
     [
       msg.id,
       sessionId,
@@ -113,6 +116,7 @@ export async function saveMessage(sessionId: string, msg: ChatMessage): Promise<
       msg.costUsd ?? null,
       msg.toolCalls ? JSON.stringify(msg.toolCalls) : null,
       msg.thinking ? JSON.stringify(msg.thinking) : null,
+      msg.images ? JSON.stringify(msg.images) : null,
     ],
   );
   await updateSessionTimestamp(sessionId);
@@ -131,6 +135,7 @@ export async function loadSessionMessages(sessionId: string): Promise<ChatMessag
     cost_usd: number | null;
     tool_calls: string | null;
     thinking: string | null;
+    images: string | null;
   }>>(
     "SELECT * FROM chat_messages WHERE session_id = ? ORDER BY timestamp ASC",
     [sessionId],
@@ -146,5 +151,6 @@ export async function loadSessionMessages(sessionId: string): Promise<ChatMessag
     costUsd: r.cost_usd ?? undefined,
     toolCalls: r.tool_calls ? JSON.parse(r.tool_calls) : undefined,
     thinking: r.thinking ? JSON.parse(r.thinking) : undefined,
+    images: r.images ? JSON.parse(r.images) : undefined,
   }));
 }

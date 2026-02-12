@@ -20,6 +20,7 @@ import { nodeTypes } from "./nodes/BaseNode";
 import { NodePalette } from "./NodePalette";
 import { NodeConfigPanel } from "./NodeConfigPanel";
 import { NodeContextMenu } from "./NodeContextMenu";
+import { FlowSettingsPanel } from "./config/FlowSettingsPanel";
 import {
   getDefaultConfig,
   NODE_REGISTRY,
@@ -39,6 +40,7 @@ interface FlowCanvasProps {
   onRunFlow?: (input: string) => void;
   onCancelFlow?: () => void;
   onResetFlow?: () => void;
+  onPublishFlow?: (flow: FlowDefinition) => void;
 }
 
 let nodeIdCounter = 0;
@@ -55,7 +57,7 @@ interface HistoryEntry {
 
 const MAX_HISTORY = 50;
 
-export function FlowCanvas({ flow, onFlowChange, execState, onRunFlow, onCancelFlow, onResetFlow }: FlowCanvasProps) {
+export function FlowCanvas({ flow, onFlowChange, execState, onRunFlow, onCancelFlow, onResetFlow, onPublishFlow }: FlowCanvasProps) {
   const [runInput, setRunInput] = useState("");
   const [flowName, setFlowName] = useState(flow?.name ?? "Untitled Flow");
   const [isEditingName, setIsEditingName] = useState(false);
@@ -497,6 +499,35 @@ export function FlowCanvas({ flow, onFlowChange, execState, onRunFlow, onCancelF
               </svg>
             </button>
 
+            {onPublishFlow && (
+              <button
+                className="flow-canvas-icon-btn"
+                onClick={() => {
+                  if (!flow) return;
+                  const exported: FlowDefinition = {
+                    ...flow,
+                    name: flowName,
+                    nodes: nodes.map((n) => {
+                      const d = n.data as unknown as FlowNodeData;
+                      return { id: n.id, kind: d.kind, label: d.label, x: n.position.x, y: n.position.y, config: d.config };
+                    }),
+                    edges: edges.map((e) => ({
+                      id: e.id, source: e.source, target: e.target,
+                      sourceHandle: e.sourceHandle ?? null, targetHandle: e.targetHandle ?? null,
+                      signal: (e.sourceHandle ?? "default") as EdgeSignal,
+                    })),
+                  };
+                  onPublishFlow(exported);
+                }}
+                title="Share to Community"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" />
+                  <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" /><line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+                </svg>
+              </button>
+            )}
+
             <button
               className={`flow-canvas-save-btn ${saveStatus === "saved" ? "save-success" : ""} ${saveStatus === "error" ? "save-error" : ""}`}
               onClick={handleSave}
@@ -583,13 +614,20 @@ export function FlowCanvas({ flow, onFlowChange, execState, onRunFlow, onCancelF
           />
         )}
       </div>
-      {selectedNode && (
+      {selectedNode ? (
         <NodeConfigPanel
           node={selectedNode}
           onConfigChange={handleNodeConfigChange}
           onDelete={handleDeleteNode}
         />
-      )}
+      ) : flow ? (
+        <FlowSettingsPanel
+          flow={flow}
+          onChange={(updated) => {
+            onFlowChange(updated);
+          }}
+        />
+      ) : null}
     </div>
   );
 }

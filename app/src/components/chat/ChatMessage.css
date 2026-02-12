@@ -194,6 +194,21 @@
   margin: 6px 0;
 }
 
+/* Image attachments */
+.message-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.message-images img {
+  max-width: 300px;
+  max-height: 200px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-secondary);
+  object-fit: contain;
+}
+
 .cursor-blink {
   animation: blink 1s steps(1) infinite;
   color: var(--accent-blue);

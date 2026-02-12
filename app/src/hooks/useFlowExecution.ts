@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef } from "react";
-import type { WSMessageToSidecar, FlowExecutionEvent, NodeOutput } from "../lib/types";
+import type { WSMessageToSidecar, FlowExecutionEvent, NodeOutput, HistoryMessage } from "../lib/types";
 import type { FlowDefinition } from "../lib/flow-types";
 
 export type NodeExecState = "idle" | "running" | "streaming" | "completed" | "error";
@@ -43,7 +43,7 @@ export function useFlowExecution(send: (msg: WSMessageToSidecar) => void) {
   const execIdRef = useRef<string | null>(null);
 
   const runFlow = useCallback(
-    (flow: FlowDefinition, input: string) => {
+    (flow: FlowDefinition, input: string, history?: HistoryMessage[], sessionId?: string) => {
       // Reset state
       const freshNodeStates: Record<string, NodeExecInfo> = {};
       for (const node of flow.nodes) {
@@ -66,7 +66,13 @@ export function useFlowExecution(send: (msg: WSMessageToSidecar) => void) {
           signal: e.sourceHandle ?? e.signal ?? "default",
         })),
       };
-      send({ type: "execute_flow", flow: normalizedFlow, input });
+      send({
+        type: "execute_flow",
+        flow: normalizedFlow,
+        input,
+        history: history?.length ? history : undefined,
+        sessionId,
+      });
     },
     [send],
   );

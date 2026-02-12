@@ -1,0 +1,48 @@
+.tag-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 0 20px 10px;
+}
+
+.tag-filter-chip {
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-primary);
+  font-size: 10px;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.tag-filter-chip:hover {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+
+.tag-filter-chip.active {
+  background: rgba(99, 102, 241, 0.15);
+  border-color: var(--accent-indigo);
+  color: var(--accent-indigo);
+}
+
+.tag-filter-clear {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-primary);
+  font-size: 10px;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.tag-filter-clear:hover {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: var(--accent-red);
+  color: var(--accent-red);
+}

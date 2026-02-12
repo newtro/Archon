@@ -464,4 +464,11 @@ export interface FlowDefinition {
   edges: SerializedEdge[];
   createdAt: number;
   updatedAt: number;
+  /** Context Agent config for multi-turn orchestration */
+  contextAgentConfig?: {
+    enabled: boolean;
+    model?: "haiku" | "sonnet" | "opus";
+    systemPrompt?: string;
+    extendedContext?: boolean;
+  };
 }

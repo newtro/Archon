@@ -8,9 +8,11 @@ import type {
   SerializedEdge,
   FlowExecutionEvent,
   ToolPreset,
+  HistoryMessage,
 } from "./flow-types.js";
 import { getGlobalProjectRoot } from "./agent.js";
 import { loadProjectContext } from "./context-loader.js";
+import type { ContextAgent } from "./context-agent.js";
 
 /** Resolve a tool preset to the SDK `tools` option */
 function resolveToolPreset(preset: ToolPreset | undefined): Options["tools"] {
@@ -110,6 +112,9 @@ export async function executeFlow(
   flow: FlowDefinition,
   userInput: string,
   apiKey: string,
+  history?: HistoryMessage[],
+  _sessionId?: string,
+  contextAgent?: ContextAgent,
 ): Promise<void> {
   const executionId = crypto.randomUUID();
   const abortController = new AbortController();
@@ -123,6 +128,8 @@ export async function executeFlow(
     decisions: [],
     errors: [],
     turn: 0,
+    conversationHistory: history,
+    contextAgent,
   };
 
   emitEvent(ws, { type: "flow_started", executionId, flowId: flow.id });
@@ -191,7 +198,7 @@ async function executeNode(
         break;
 
       case "llm":
-        output = await executeLLMNode(ws, node, cfg, input, executionId, abortController, state.projectContext);
+        output = await executeLLMNode(ws, node, cfg, input, executionId, abortController, state.projectContext, state.conversationHistory, state.contextAgent as import("./context-agent.js").ContextAgent | undefined);
         break;
 
       case "project-context":
@@ -274,8 +281,10 @@ async function executeLLMNode(
   executionId: string,
   abortController: AbortController,
   contextOutput?: string,
+  history?: HistoryMessage[],
+  contextAgent?: import("./context-agent.js").ContextAgent,
 ): Promise<NodeOutput> {
-  const model = (cfg.model as string) ?? "sonnet";
+  let model = (cfg.model as string) ?? "sonnet";
   const systemPrompt = (cfg.systemPrompt as string) ?? "";
   const toolPreset = cfg.toolPreset as ToolPreset | undefined;
   const extraTools = (cfg.tools as string[]) ?? [];
@@ -286,6 +295,40 @@ async function executeLLMNode(
 
   // Resolve tools from preset + any extra tools
   const resolvedTools = resolveToolPreset(toolPreset);
+
+  // Context Agent: classify intent and generate briefing
+  // NOTE: handleDirectly is NOT used in flow context — it sends assistant_text
+  // events that would create a duplicate message alongside the flow's node_streaming.
+  let prompt = input;
+  if (contextAgent) {
+    try {
+      const classification = await contextAgent.classifyIntent(input, ws, abortController);
+
+      // Override model based on Context Agent routing
+      model = classification.routeToModel;
+
+      // Generate a curated briefing instead of raw history
+      const briefing = await contextAgent.generateBriefing(input, classification, ws, abortController);
+      prompt = briefing.context;
+    } catch (err) {
+      console.warn("[flow-engine] Context Agent error, falling back to raw history:", err);
+      // Fall through to raw history prepend below
+      if (history && history.length > 0) {
+        const turns = history.map((m) => {
+          const role = m.role === "user" ? "User" : "Assistant";
+          return `${role}: ${m.content}`;
+        }).join("\n\n");
+        prompt = `<conversation_history>\n${turns}\n</conversation_history>\n\n${input}`;
+      }
+    }
+  } else if (history && history.length > 0) {
+    // Fallback: raw history prepend when no Context Agent
+    const turns = history.map((m) => {
+      const role = m.role === "user" ? "User" : "Assistant";
+      return `${role}: ${m.content}`;
+    }).join("\n\n");
+    prompt = `<conversation_history>\n${turns}\n</conversation_history>\n\n${input}`;
+  }
 
   const options: Options = {
     model: model as "haiku" | "sonnet" | "opus",
@@ -304,7 +347,7 @@ async function executeLLMNode(
   let result = "";
   let totalCost = 0;
 
-  for await (const event of query({ prompt: input, options })) {
+  for await (const event of query({ prompt, options })) {
     if (event.type === "stream_event") {
       const streamEvent = event.event;
       if (
@@ -322,6 +365,15 @@ async function executeLLMNode(
       }
     } else if (event.type === "result" && event.subtype === "success") {
       totalCost = event.total_cost_usd ?? 0;
+    }
+  }
+
+  // Context Agent: ingest result to update structured state
+  if (contextAgent) {
+    try {
+      await contextAgent.ingestResult(result, [], model, ws, abortController);
+    } catch (err) {
+      console.warn("[flow-engine] Context Agent ingestion error:", err);
     }
   }
 

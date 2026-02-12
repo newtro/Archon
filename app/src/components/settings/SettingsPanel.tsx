@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
-import { KeyRound, Eye, EyeOff, Cpu, Info, FolderOpen } from "lucide-react";
+import { KeyRound, Eye, EyeOff, Cpu, Info, FolderOpen, GitBranch, ExternalLink } from "lucide-react";
+import { open as shellOpen } from "@tauri-apps/plugin-shell";
 import { getSetting, setSetting } from "../../lib/store";
 import { McpConfigSection } from "./McpConfigSection";
 import "./SettingsPanel.css";
@@ -15,18 +16,29 @@ export function SettingsPanel({ onApiKeyChange, onModelChange }: SettingsPanelPr
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
   const [model, setModel] = useState("sonnet");
   const [autoProjectContext, setAutoProjectContext] = useState(true);
+  const [githubToken, setGithubToken] = useState("");
+  const [githubMasked, setGithubMasked] = useState(true);
+  const [githubSaveStatus, setGithubSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
+  const [repoOwner, setRepoOwner] = useState("newtro");
+  const [repoName, setRepoName] = useState("Archon-Community");
 
   useEffect(() => {
     async function loadSettings() {
       const storedKey = await getSetting<string>("apiKey", "");
       const storedModel = await getSetting<string>("model", "sonnet");
       const storedAutoContext = await getSetting<boolean>("autoProjectContext", true);
+      const storedGithubToken = await getSetting<string>("githubToken", "");
+      const storedRepoOwner = await getSetting<string>("communityRepoOwner", "newtro");
+      const storedRepoName = await getSetting<string>("communityRepoName", "Archon-Community");
       if (storedKey) {
         setApiKey(storedKey);
         onApiKeyChange(storedKey);
       }
       setModel(storedModel);
       setAutoProjectContext(storedAutoContext);
+      if (storedGithubToken) setGithubToken(storedGithubToken);
+      setRepoOwner(storedRepoOwner);
+      setRepoName(storedRepoName);
     }
     loadSettings();
   }, [onApiKeyChange]);
@@ -44,6 +56,22 @@ export function SettingsPanel({ onApiKeyChange, onModelChange }: SettingsPanelPr
     await setSetting("model", newModel);
     onModelChange?.(newModel);
   };
+
+  const handleSaveGithubToken = async () => {
+    setGithubSaveStatus("saving");
+    await setSetting("githubToken", githubToken);
+    setGithubSaveStatus("saved");
+    setTimeout(() => setGithubSaveStatus("idle"), 2000);
+  };
+
+  const handleSaveRepoConfig = async () => {
+    await setSetting("communityRepoOwner", repoOwner);
+    await setSetting("communityRepoName", repoName);
+  };
+
+  const maskedGithubToken = githubToken
+    ? githubToken.slice(0, 7) + "..." + githubToken.slice(-4)
+    : "";
 
   const maskedKey = apiKey
     ? apiKey.slice(0, 7) + "..." + apiKey.slice(-4)
@@ -134,6 +162,84 @@ export function SettingsPanel({ onApiKeyChange, onModelChange }: SettingsPanelPr
         </section>
 
         <McpConfigSection />
+
+        <section className="settings-section">
+          <h3 className="settings-section-title">
+            <GitBranch size={16} />
+            GitHub Integration
+          </h3>
+          <p className="settings-description">
+            Connect your GitHub account to publish flows to the community registry.
+            Requires a Personal Access Token with <code>public_repo</code> scope.
+            {" "}
+            <button
+              className="settings-link"
+              onClick={() => shellOpen("https://github.com/settings/tokens")}
+            >
+              Create a token <ExternalLink size={10} />
+            </button>
+          </p>
+          <div className="settings-field">
+            <div className="api-key-input-group">
+              <input
+                type={githubMasked ? "password" : "text"}
+                className="settings-input"
+                placeholder="ghp_..."
+                value={githubMasked ? maskedGithubToken : githubToken}
+                onChange={(e) => {
+                  if (!githubMasked) {
+                    setGithubToken(e.target.value);
+                    setGithubSaveStatus("idle");
+                  }
+                }}
+                onFocus={() => {
+                  if (githubMasked) setGithubMasked(false);
+                }}
+              />
+              <button
+                className="settings-btn-icon"
+                onClick={() => setGithubMasked(!githubMasked)}
+                title={githubMasked ? "Show token" : "Hide token"}
+              >
+                {githubMasked ? <Eye size={16} /> : <EyeOff size={16} />}
+              </button>
+            </div>
+            <button
+              className="settings-btn-primary"
+              onClick={handleSaveGithubToken}
+              disabled={!githubToken || githubSaveStatus === "saving"}
+            >
+              {githubSaveStatus === "saving"
+                ? "Saving..."
+                : githubSaveStatus === "saved"
+                  ? "Saved"
+                  : "Save Token"}
+            </button>
+          </div>
+          <div className="settings-field" style={{ marginTop: 12 }}>
+            <label className="settings-label">Community Repository</label>
+            <div className="repo-config-group">
+              <input
+                className="settings-input"
+                placeholder="Owner"
+                value={repoOwner}
+                onChange={(e) => setRepoOwner(e.target.value)}
+                onBlur={handleSaveRepoConfig}
+              />
+              <span className="repo-separator">/</span>
+              <input
+                className="settings-input"
+                placeholder="Repository"
+                value={repoName}
+                onChange={(e) => setRepoName(e.target.value)}
+                onBlur={handleSaveRepoConfig}
+              />
+            </div>
+            <p className="settings-hint">
+              The GitHub repository used for browsing and publishing community flows.
+            </p>
+          </div>
+        </section>
 
         <section className="settings-section">
           <h3 className="settings-section-title">

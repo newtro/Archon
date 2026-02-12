@@ -77,6 +77,7 @@
   flex-direction: column;
   gap: 8px;
   transition: border-color 0.15s;
+  cursor: pointer;
 }
 
 .registry-card:hover {
@@ -206,8 +207,65 @@
   color: var(--text-muted);
   text-decoration: none;
   transition: color 0.15s;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
 }
 
 .registry-link:hover {
   color: var(--accent-indigo);
+}
+
+/* Refresh button */
+.registry-refresh-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+  transition: color 0.15s, background 0.15s;
+}
+
+.registry-refresh-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+/* Card stats row */
+.registry-card-stats {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.registry-card-downloads {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+/* Update badge */
+.registry-update-badge {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--accent-amber);
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: rgba(245, 158, 11, 0.12);
+}
+
+/* Error notice */
+.registry-error-notice {
+  padding: 6px 20px;
+  font-size: 11px;
+  color: var(--accent-red);
+  background: rgba(239, 68, 68, 0.08);
+  border-bottom: 1px solid var(--border-secondary);
 }

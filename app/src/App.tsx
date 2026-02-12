@@ -12,6 +12,7 @@ import { FlowDesigner } from "./components/flow/FlowDesigner";
 import { FlowExecutionPanel } from "./components/flow/FlowExecutionPanel";
 import { LogStreamPanel } from "./components/logs/LogStreamPanel";
 import { FlowRegistryPanel } from "./components/registry/FlowRegistryPanel";
+import { PublishFlowModal } from "./components/registry/PublishFlowModal";
 import { StartupPage } from "./components/startup/StartupPage";
 import { HumanReviewModal, type HumanReviewRequest } from "./components/flow/HumanReviewModal";
 import { useWebSocket } from "./hooks/useWebSocket";
@@ -21,15 +22,18 @@ import { useWorkspace } from "./contexts/WorkspaceContext";
 import { getSetting, setSetting } from "./lib/store";
 import { listFlows, loadFlow } from "./lib/flow-storage";
 import { createSession, saveMessage, loadSessionMessages, deleteSession as deleteSessionDb } from "./lib/chat-storage";
-import type { ChatMessage, WSMessageToSidecar, FlowSummary, FlowExecutionEvent, RecentProject } from "./lib/types";
+import type { ChatMessage, WSMessageToSidecar, FlowSummary, FlowExecutionEvent, RecentProject, ImageAttachment, LogEntry, LogEntryEvent, HistoryMessage } from "./lib/types";
 
 function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
   const [isConnected, setIsConnected] = useState(false);
   const [activeView, setActiveView] = useState<SidebarView>("startup");
   const [openFile, setOpenFile] = useState<{ path: string; content: string } | null>(null);
   const [activeModel, setActiveModel] = useState<string>("sonnet");
   const [pendingReview, setPendingReview] = useState<HumanReviewRequest | null>(null);
+  const [publishingFlow, setPublishingFlow] = useState<import("./lib/flow-types").FlowDefinition | null>(null);
+  const [showDebugPanel, setShowDebugPanel] = useState(false);
 
   // Startup / recent projects
   const [recentProjects, setRecentProjects] = useState<RecentProject[]>([]);
@@ -150,12 +154,28 @@ function App() {
     }
   }, [handleFlowEvent]);
 
+  const handleLogEntry = useCallback((entryOrUpdate: LogEntryEvent) => {
+    if ("update" in entryOrUpdate && entryOrUpdate.update) {
+      const { correlationId, patch } = entryOrUpdate;
+      setLogEntries((prev) => {
+        const idx = prev.findIndex((e) => e.correlationId === correlationId);
+        if (idx === -1) return prev;
+        const updated = [...prev];
+        updated[idx] = { ...updated[idx], ...patch };
+        return updated;
+      });
+    } else {
+      setLogEntries((prev) => [...prev, entryOrUpdate as LogEntry]);
+    }
+  }, []);
+
   const { send, connectionStatus } = useWebSocket({
     onMessage: (msg) => {
       setMessages((prev) => [...prev, msg]);
     },
     onStatusChange: setIsConnected,
     onFlowEvent: handleFlowEventWithChat,
+    onLogEntry: handleLogEntry,
     onConnect: (directSend) => {
       // Send persisted API key to sidecar immediately on WebSocket open
       getSetting<string>("apiKey", "").then((key) => {
@@ -163,12 +183,16 @@ function App() {
           directSend({ type: "set_api_key", key });
         }
       });
-      // Auto-restore project root from previous session
-      if (lastProjectRootRef.current) {
-        directSend({ type: "set_project_root", path: lastProjectRootRef.current });
-      }
     },
   });
+
+  // Sync project root to sidecar whenever it changes or connection is (re-)established.
+  // This fixes the startup race where WebSocket connects before the store finishes loading.
+  useEffect(() => {
+    if (projectRoot && isConnected) {
+      send({ type: "set_project_root", path: projectRoot });
+    }
+  }, [projectRoot, isConnected, send]);
 
   // Keep the ref in sync with the actual send function
   sendRef.current = send;
@@ -179,7 +203,7 @@ function App() {
     send: (msg) => send(msg as WSMessageToSidecar),
   });
 
-  const handleSendMessage = useCallback(async (text: string) => {
+  const handleSendMessage = useCallback(async (text: string, images?: ImageAttachment[]) => {
     // Create session lazily on first message
     if (!sessionIdRef.current) {
       try {
@@ -187,13 +211,30 @@ function App() {
       } catch { /* DB error -- continue without persistence */ }
     }
 
+    // Build conversation history from existing messages (before adding the new one)
+    const history: HistoryMessage[] = messages
+      .filter((m) => (m.role === "user" || m.role === "assistant") && m.content && !m.isStreaming)
+      .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
+
     const userMessage: ChatMessage = {
       id: crypto.randomUUID(),
       role: "user",
       content: text,
       timestamp: Date.now(),
+      images,
     };
     setMessages((prev) => [...prev, userMessage]);
+
+    // Log user message
+    handleLogEntry({
+      id: `log-user-${userMessage.id}`,
+      timestamp: userMessage.timestamp,
+      level: "info",
+      source: "user",
+      message: `User: ${text.slice(0, 120)}${text.length > 120 ? "..." : ""}`,
+      detail: text.length > 120 ? text : undefined,
+      status: "complete",
+    });
 
     if (selectedFlowId) {
       // Route through flow execution
@@ -210,7 +251,7 @@ function App() {
           model: `Flow: ${flow.name}`,
         };
         setMessages((prev) => [...prev, assistantMsg]);
-        runFlow(flow, text);
+        runFlow(flow, text, history, sessionIdRef.current ?? undefined);
       } else {
         setMessages((prev) => [...prev, {
           id: crypto.randomUUID(),
@@ -221,10 +262,16 @@ function App() {
         setSelectedFlowId(null);
       }
     } else {
-      // Direct chat (existing behavior)
-      send({ type: "user_message", content: text });
+      // Direct chat — include history for fallback, sessionId for SDK resume
+      send({
+        type: "user_message",
+        content: text,
+        images,
+        sessionId: sessionIdRef.current ?? undefined,
+        history: history.length > 0 ? history : undefined,
+      });
     }
-  }, [selectedFlowId, send, runFlow]);
+  }, [selectedFlowId, send, runFlow, messages]);
 
   const handleApiKeyChange = useCallback(
     (key: string) => {
@@ -288,6 +335,7 @@ function App() {
 
   const handleNewChat = useCallback(() => {
     setMessages([]);
+    setLogEntries([]);
     sessionIdRef.current = null;
     savedMessageIds.current = new Set();
     flowChatMessageRef.current = null;
@@ -327,18 +375,36 @@ function App() {
     sessionId: sessionIdRef.current,
     onLoadSession: handleLoadSession,
     onDeleteSession: handleDeleteSession,
+    debugActive: showDebugPanel,
+    onToggleDebug: () => setShowDebugPanel((prev) => !prev),
   };
 
   const showExecPanel = execState.status !== "idle";
 
   const renderChatWithExecPanel = () => {
+    const chatEl = <ChatPanel {...chatPanelProps} />;
+
+    // Debug panel takes priority over flow exec panel on the right
+    if (showDebugPanel) {
+      return (
+        <div className="workspace-split">
+          <div className="workspace-split-left" style={{ flex: 1, width: "auto" }}>
+            {chatEl}
+          </div>
+          <div className="workspace-split-right debug-panel-container" style={{ width: "40%" }}>
+            <LogStreamPanel logEntries={logEntries} onClear={() => setLogEntries([])} />
+          </div>
+        </div>
+      );
+    }
+
     if (!showExecPanel) {
-      return <ChatPanel {...chatPanelProps} />;
+      return chatEl;
     }
     return (
       <div className="workspace-split">
         <div className="workspace-split-left" style={{ flex: 1, width: "auto" }}>
-          <ChatPanel {...chatPanelProps} />
+          {chatEl}
         </div>
         <FlowExecutionPanel
           execState={execState}
@@ -436,11 +502,12 @@ function App() {
             onRunFlow={runFlow}
             onCancelFlow={cancelFlow}
             onResetFlow={resetFlow}
+            onPublishFlow={setPublishingFlow}
           />
         );
 
       case "logs":
-        return <LogStreamPanel messages={messages} />;
+        return <LogStreamPanel logEntries={logEntries} onClear={() => setLogEntries([])} />;
 
       case "registry":
         return <FlowRegistryPanel />;
@@ -473,6 +540,12 @@ function App() {
             send({ type: "user_message", content: `[REJECTED] ${feedback}` });
             setPendingReview(null);
           }}
+        />
+      )}
+      {publishingFlow && (
+        <PublishFlowModal
+          flow={publishingFlow}
+          onClose={() => setPublishingFlow(null)}
         />
       )}
     </div>
