@@ -2,6 +2,13 @@
 
 export type MessageRole = "user" | "assistant" | "system";
 
+export interface ImageAttachment {
+  id: string;
+  dataUrl: string;
+  mimeType: string;
+  name: string;
+}
+
 export type ToolCallStatus = "loading" | "success" | "error";
 
 export interface ToolCall {
@@ -43,6 +50,8 @@ export interface ChatMessage {
   tokensOut?: number;
   /** Cost in USD */
   costUsd?: number;
+  /** Image attachments (user messages) */
+  images?: ImageAttachment[];
 }
 
 /** Lightweight flow reference for the chat flow selector */
@@ -64,7 +73,7 @@ export interface ChatSession {
 /** WebSocket message types between frontend and sidecar */
 
 export type WSMessageToSidecar =
-  | { type: "user_message"; content: string }
+  | { type: "user_message"; content: string; images?: ImageAttachment[] }
   | { type: "cancel" }
   | { type: "set_api_key"; key: string }
   | { type: "set_project_root"; path: string }

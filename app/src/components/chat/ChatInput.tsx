@@ -1,15 +1,24 @@
 import { useState, useRef, useCallback, useEffect } from "react";
-import { Send, Workflow, ChevronDown, MessageCircle } from "lucide-react";
-import type { FlowSummary } from "../../lib/types";
+import { Send, Workflow, ChevronDown, MessageCircle, Paperclip, X } from "lucide-react";
+import type { FlowSummary, ImageAttachment } from "../../lib/types";
 import "./ChatInput.css";
 
 interface ChatInputProps {
-  onSend: (text: string) => void;
+  onSend: (text: string, images?: ImageAttachment[]) => void;
   disabled: boolean;
   flows?: FlowSummary[];
   selectedFlowId?: string | null;
   onFlowSelect?: (flowId: string | null) => void;
   isFlowRunning?: boolean;
+}
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
 }
 
 export function ChatInput({
@@ -22,8 +31,10 @@ export function ChatInput({
 }: ChatInputProps) {
   const [text, setText] = useState("");
   const [showDropdown, setShowDropdown] = useState(false);
+  const [attachedImages, setAttachedImages] = useState<ImageAttachment[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const selectedFlow = flows.find((f) => f.id === selectedFlowId);
   const effectiveDisabled = disabled || (isFlowRunning && selectedFlowId !== null);
@@ -40,15 +51,63 @@ export function ChatInput({
     return () => document.removeEventListener("mousedown", handler);
   }, [showDropdown]);
 
+  const addImageFiles = useCallback(async (files: File[]) => {
+    const imageFiles = files.filter((f) => f.type.startsWith("image/"));
+    const newAttachments: ImageAttachment[] = [];
+    for (const file of imageFiles) {
+      const dataUrl = await readFileAsDataUrl(file);
+      newAttachments.push({
+        id: crypto.randomUUID(),
+        dataUrl,
+        mimeType: file.type,
+        name: file.name,
+      });
+    }
+    if (newAttachments.length > 0) {
+      setAttachedImages((prev) => [...prev, ...newAttachments]);
+    }
+  }, []);
+
+  const handlePaste = useCallback((e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const imageFiles: File[] = [];
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.startsWith("image/")) {
+        const file = items[i].getAsFile();
+        if (file) imageFiles.push(file);
+      }
+    }
+    if (imageFiles.length > 0) {
+      e.preventDefault();
+      addImageFiles(imageFiles);
+    }
+  }, [addImageFiles]);
+
+  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (files && files.length > 0) {
+      addImageFiles(Array.from(files));
+    }
+    // Reset so the same file can be selected again
+    e.target.value = "";
+  }, [addImageFiles]);
+
+  const removeImage = useCallback((id: string) => {
+    setAttachedImages((prev) => prev.filter((img) => img.id !== id));
+  }, []);
+
   const handleSend = useCallback(() => {
     const trimmed = text.trim();
-    if (!trimmed || effectiveDisabled) return;
-    onSend(trimmed);
+    const hasContent = trimmed || attachedImages.length > 0;
+    if (!hasContent || effectiveDisabled) return;
+    onSend(trimmed, attachedImages.length > 0 ? attachedImages : undefined);
     setText("");
+    setAttachedImages([]);
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
-  }, [text, effectiveDisabled, onSend]);
+  }, [text, attachedImages, effectiveDisabled, onSend]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -105,6 +164,24 @@ export function ChatInput({
           </div>
         )}
 
+        {/* Image previews */}
+        {attachedImages.length > 0 && (
+          <div className="chat-image-previews">
+            {attachedImages.map((img) => (
+              <div key={img.id} className="chat-image-preview">
+                <img src={img.dataUrl} alt={img.name} />
+                <button
+                  className="chat-image-remove"
+                  onClick={() => removeImage(img.id)}
+                  title="Remove image"
+                >
+                  <X size={10} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* Input row */}
         <div className="chat-input-row">
           <textarea
@@ -120,13 +197,30 @@ export function ChatInput({
             value={text}
             onChange={handleInput}
             onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
             disabled={effectiveDisabled}
             rows={1}
           />
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            style={{ display: "none" }}
+            onChange={handleFileSelect}
+          />
+          <button
+            className="chat-attach-btn"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={effectiveDisabled}
+            title="Attach image"
+          >
+            <Paperclip size={16} />
+          </button>
           <button
             className="chat-send-btn"
             onClick={handleSend}
-            disabled={effectiveDisabled || !text.trim()}
+            disabled={effectiveDisabled || (!text.trim() && attachedImages.length === 0)}
             title={selectedFlow ? `Run ${selectedFlow.name}` : "Send message"}
           >
             <Send size={16} />
