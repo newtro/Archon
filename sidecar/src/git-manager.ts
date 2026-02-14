@@ -1,5 +1,6 @@
 import simpleGit, { type SimpleGit, type StatusResult, type LogResult, type BranchSummary } from "simple-git";
 import { watch, type FSWatcher } from "chokidar";
+import * as path from "path";
 import { getGlobalProjectRoot } from "./agent.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -63,6 +64,7 @@ export interface GitRemoteInfo {
 type StatusCallback = (status: GitStatusData) => void;
 
 let watcher: FSWatcher | null = null;
+let headWatcher: FSWatcher | null = null;
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 let debounceMs = 500;
 let statusCallback: StatusCallback | null = null;
@@ -357,6 +359,16 @@ export function startWatching(callback: StatusCallback): void {
   watcher.on("change", scheduleRefresh);
   watcher.on("unlink", scheduleRefresh);
 
+  // Also watch .git/HEAD and .git/index for branch switches and staging changes
+  // (the main watcher ignores .git/**)
+  const gitHead = path.join(root, ".git", "HEAD");
+  const gitIndex = path.join(root, ".git", "index");
+  headWatcher = watch([gitHead, gitIndex], {
+    persistent: true,
+    ignoreInitial: true,
+  });
+  headWatcher.on("change", scheduleRefresh);
+
   console.log(`[git-manager] Watching ${root} (debounce: ${debounceMs}ms)`);
 }
 
@@ -364,6 +376,10 @@ export function stopWatching(): void {
   if (watcher) {
     watcher.close();
     watcher = null;
+  }
+  if (headWatcher) {
+    headWatcher.close();
+    headWatcher = null;
   }
   if (debounceTimer) {
     clearTimeout(debounceTimer);

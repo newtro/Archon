@@ -1,10 +1,12 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   FileText, FilePlus, Pencil, Terminal, FolderSearch, Search,
   Globe, Wrench, CheckCircle, XCircle, ChevronDown,
+  ListTodo, Cpu, NotebookPen,
 } from "lucide-react";
 import { parseAnsi } from "../../lib/ansi";
 import type { ToolCall } from "../../lib/types";
+import { getToolCompletion } from "../../lib/tool-completion-store";
 import "./ToolCallCard.css";
 
 interface ToolCallCardProps {
@@ -20,6 +22,9 @@ const TOOL_CONFIG: Record<string, { icon: string; color: string; label: string }
   Grep: { icon: "search", color: "var(--accent-teal)", label: "Grep" },
   WebSearch: { icon: "globe", color: "var(--accent-indigo)", label: "WebSearch" },
   WebFetch: { icon: "globe", color: "var(--accent-indigo)", label: "WebFetch" },
+  Task: { icon: "cpu", color: "var(--accent-purple)", label: "Task" },
+  TodoWrite: { icon: "list-todo", color: "var(--accent-amber)", label: "Todo" },
+  NotebookEdit: { icon: "notebook", color: "var(--accent-green)", label: "Notebook" },
 };
 
 function getToolSummary(toolCall: ToolCall): string {
@@ -67,8 +72,71 @@ function getToolSummary(toolCall: ToolCall): string {
       const pattern = (args.pattern as string) ?? "";
       return `Searching for "${pattern}"`;
     }
-    default:
+    case "Task": {
+      const desc = (args.description as string) ?? "";
+      const agentType = (args.subagent_type as string) ?? "";
+      if (desc) return `${agentType ? agentType + ": " : ""}${desc}`;
+      const prompt = (args.prompt as string) ?? "";
+      if (prompt) return prompt.length > 80 ? prompt.slice(0, 80) + "..." : prompt;
+      return agentType || "Running agent";
+    }
+    case "TodoWrite": {
+      const todos = args.todos as Array<Record<string, unknown>> | undefined;
+      if (!todos || !Array.isArray(todos)) return "Updating tasks";
+      const inProgress = todos.filter((t) => t.status === "in_progress");
+      const completed = todos.filter((t) => t.status === "completed");
+      const pending = todos.filter((t) => t.status === "pending");
+      const parts: string[] = [];
+      if (inProgress.length > 0) {
+        const active = (inProgress[0].activeForm as string) ?? (inProgress[0].content as string) ?? "";
+        parts.push(active);
+      }
+      parts.push(`${completed.length}/${todos.length} done`);
+      if (pending.length > 0) parts.push(`${pending.length} pending`);
+      return parts.join(" -- ");
+    }
+    case "WebSearch": {
+      const query = (args.query as string) ?? "";
+      return query ? `"${query}"` : "Searching...";
+    }
+    case "WebFetch": {
+      const url = (args.url as string) ?? "";
+      if (url) {
+        try {
+          const hostname = new URL(url).hostname;
+          return hostname;
+        } catch {
+          return url.length > 60 ? url.slice(0, 60) + "..." : url;
+        }
+      }
+      return "Fetching...";
+    }
+    case "NotebookEdit": {
+      const nbPath = (args.notebook_path as string) ?? "";
+      const nbName = nbPath.split(/[/\\]/).pop() ?? nbPath;
+      return nbName || "Editing notebook";
+    }
+    default: {
+      // Generic fallback: try common arg patterns
+      if (args.file_path) {
+        const fp = (args.file_path as string).split(/[/\\]/).pop() ?? args.file_path;
+        return String(fp);
+      }
+      if (args.command) {
+        const cmd = String(args.command);
+        return cmd.length > 60 ? cmd.slice(0, 60) + "..." : cmd;
+      }
+      if (args.query) return String(args.query);
+      if (args.pattern) return String(args.pattern);
+      if (args.prompt) {
+        const p = String(args.prompt);
+        return p.length > 60 ? p.slice(0, 60) + "..." : p;
+      }
+      // Show arg keys if there are any
+      const keys = Object.keys(args);
+      if (keys.length > 0) return keys.join(", ");
       return name;
+    }
   }
 }
 
@@ -81,6 +149,9 @@ const TOOL_ICONS: Record<string, React.ComponentType<{ size?: number }>> = {
   Grep: Search,
   WebSearch: Globe,
   WebFetch: Globe,
+  Task: Cpu,
+  TodoWrite: ListTodo,
+  NotebookEdit: NotebookPen,
 };
 
 function ToolIcon({ name }: { name: string }) {
@@ -136,23 +207,46 @@ function BashResultView({ result }: { result: string }) {
   );
 }
 
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
 export function ToolCallCard({ toolCall }: ToolCallCardProps) {
   const [expanded, setExpanded] = useState(false);
+  const [tick, setTick] = useState(0);
   const config = TOOL_CONFIG[toolCall.name] ?? { icon: "wrench", color: "var(--accent-slate)", label: toolCall.name };
-  const summary = getToolSummary(toolCall);
-  const isLoading = toolCall.status === "loading";
-  const isError = toolCall.status === "error";
 
-  const elapsed = toolCall.durationMs
-    ? toolCall.durationMs < 1000
-      ? `${toolCall.durationMs}ms`
-      : `${(toolCall.durationMs / 1000).toFixed(1)}s`
+  // Check global completion store — this is the authoritative source for tool completion
+  // It bypasses React state entirely, so it's immune to state update race conditions
+  const completion = getToolCompletion(toolCall.id);
+
+  // Derive effective status: global store takes priority over prop
+  const effectiveStatus = completion?.status ?? toolCall.status;
+  const effectiveDuration = completion?.durationMs ?? toolCall.durationMs;
+  const effectiveResult = completion?.result ?? toolCall.result;
+
+  const summary = getToolSummary(toolCall);
+  const isLoading = effectiveStatus === "loading";
+  const isError = effectiveStatus === "error";
+
+  // Tick every 100ms while loading so the elapsed timer updates smoothly
+  useEffect(() => {
+    if (!isLoading) return;
+    const id = setInterval(() => setTick((t) => t + 1), 100);
+    return () => clearInterval(id);
+  }, [isLoading]);
+
+  // tick is only used to force re-renders; Date.now() computes the actual elapsed time
+  void tick;
+  const elapsed = effectiveDuration
+    ? formatDuration(effectiveDuration)
     : isLoading
-      ? `${Math.round((Date.now() - toolCall.startedAt))}ms`
+      ? formatDuration(Date.now() - toolCall.startedAt)
       : "";
 
   const renderExpandedContent = () => {
-    if (!toolCall.result) return null;
+    if (!effectiveResult) return null;
 
     // Edit tool: show inline diff
     if (toolCall.name === "Edit") {
@@ -161,11 +255,11 @@ export function ToolCallCard({ toolCall }: ToolCallCardProps) {
 
     // Bash tool: render ANSI colors
     if (toolCall.name === "Bash") {
-      return <BashResultView result={toolCall.result} />;
+      return <BashResultView result={effectiveResult} />;
     }
 
     // Default: plain text
-    return <pre className="tool-result">{toolCall.result}</pre>;
+    return <pre className="tool-result">{effectiveResult}</pre>;
   };
 
   return (
@@ -185,20 +279,20 @@ export function ToolCallCard({ toolCall }: ToolCallCardProps) {
         <span className="tool-spacer" />
         {elapsed && <span className="tool-duration">{elapsed}</span>}
         {!isLoading && (
-          <span className={`tool-status ${toolCall.status}`}>
-            {toolCall.status === "success" ? (
+          <span className={`tool-status ${effectiveStatus}`}>
+            {effectiveStatus === "success" ? (
               <CheckCircle size={14} />
-            ) : toolCall.status === "error" ? (
+            ) : effectiveStatus === "error" ? (
               <XCircle size={14} />
             ) : null}
           </span>
         )}
-        {!isLoading && toolCall.result && (
+        {!isLoading && effectiveResult && (
           <ChevronDown size={12} className={`tool-chevron ${expanded ? "open" : ""}`} />
         )}
       </button>
       {isLoading && <div className="tool-progress-bar" />}
-      {expanded && toolCall.result && (
+      {expanded && effectiveResult && (
         <div className="tool-card-content">
           {renderExpandedContent()}
         </div>

@@ -14,6 +14,8 @@ import { SubFlowConfig } from "./config/SubFlowConfig";
 import { MemoryConfig } from "./config/MemoryConfig";
 import { HandoffConfig } from "./config/HandoffConfig";
 import { ProjectContextConfig } from "./config/ProjectContextConfig";
+import { AdoPrReadConfig } from "./config/AdoPrReadConfig";
+import { AdoPrWriteConfig } from "./config/AdoPrWriteConfig";
 import { StartConfig } from "./config/StartConfig";
 import { EndConfig } from "./config/EndConfig";
 import "./NodeConfigPanel.css";
@@ -106,6 +108,20 @@ const NODE_DOCS: Record<NodeKind, DocSection[]> = {
     { heading: "Output Format", body: "Tree & Contents: directory structure plus file contents (most complete). Contents Only: just file text. Tree Only: just the directory structure (lightweight overview)." },
     { heading: "Usage Tips", body: "Place before LLM nodes that need codebase awareness. Enable 'Respect .gitignore' to automatically skip build artifacts and dependencies." },
   ],
+  "ado-pr-read": [
+    { heading: "Overview", body: "Fetches comprehensive pull request data from Azure DevOps and outputs it as structured JSON. This is a data-gathering node -- the actual code review happens in a downstream LLM node." },
+    { heading: "Data Retrieved", body: "PR metadata (title, description, author, status, branches), file diffs, comment threads, linked work items, commit history, build/pipeline status, reviewer assignments, and iteration history." },
+    { heading: "Configuration", body: "Set the project name and repository name. The organization URL and PAT are configured in global Settings. The PR number comes dynamically from the upstream node (e.g., from a chat message)." },
+    { heading: "Incremental Reviews", body: "Enable 'Track iterations' to only fetch changes since the last reviewed iteration on subsequent runs. Useful for re-reviewing after the author pushes fixes." },
+    { heading: "Outputs", body: "Rich signals: success (data fetched), error (API failure), no-changes (empty diff), draft (PR is draft), merged (PR already merged)." },
+  ],
+  "ado-pr-write": [
+    { heading: "Overview", body: "Posts review results back to an Azure DevOps pull request. Expects structured JSON input from an upstream LLM node describing comments, inline feedback, and vote decisions." },
+    { heading: "Actions", body: "Can post inline comments on specific code lines, an overall review summary comment, and set the reviewer vote status (approve, reject, wait for author, etc.)." },
+    { heading: "Input Schema", body: "The upstream LLM node automatically receives the expected JSON schema via the flow engine's schema injection system. The schema includes pullRequestId, summary, vote, and inlineComments fields." },
+    { heading: "Safety Gate", body: "By default, requires human approval before posting. The node pauses and shows proposed comments for review. Disable this for fully automated pipelines." },
+    { heading: "Outputs", body: "Rich signals: success (all posted), partial (some comments posted but errors on others), error (API failure), blocked (waiting for human approval)." },
+  ],
   start: [
     { heading: "Overview", body: "The entry point of every flow. When a flow executes, it begins here. Each flow must have exactly one Start node." },
     { heading: "Input Schema", body: "Optional JSON Schema defining the expected input structure. When set, the flow engine validates incoming data against this schema before execution begins." },
@@ -138,6 +154,8 @@ const CONFIG_COMPONENTS: Record<NodeKind, React.ComponentType<{ config: Record<s
   memory: MemoryConfig,
   handoff: HandoffConfig,
   "project-context": ProjectContextConfig,
+  "ado-pr-read": AdoPrReadConfig,
+  "ado-pr-write": AdoPrWriteConfig,
   start: StartConfig,
   end: EndConfig,
 };

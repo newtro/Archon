@@ -85,6 +85,16 @@ export function BaseNode({ kind, label, selected, children, subtitle, execState,
           <span>Running...</span>
         </div>
       )}
+      {execState === "review" && (
+        <div className="flow-node-exec-bar exec-review">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+            <circle cx="9" cy="7" r="4" />
+            <path d="m16 11 2 2 4-4" />
+          </svg>
+          <span>Waiting for review...</span>
+        </div>
+      )}
       {execState === "streaming" && streamingText && (
         <div className="flow-node-exec-bar">
           <div className="flow-node-exec-spinner" />
@@ -352,6 +362,26 @@ export function ProjectContextNode({ id, data, selected }: NodeProps) {
   );
 }
 
+export function AdoPrReadNode({ id, data, selected }: NodeProps) {
+  const d = data as unknown as FlowNodeData;
+  const cfg = d.config.kind === "ado-pr-read" ? d.config.config : null;
+  const exec = useExecState(id);
+  const subtitle = cfg?.projectName ? `${cfg.projectName}/${cfg.repositoryName || "..."}` : "Not configured";
+  return (
+    <BaseNode kind="ado-pr-read" label={d.label} selected={!!selected} subtitle={subtitle} {...exec} />
+  );
+}
+
+export function AdoPrWriteNode({ id, data, selected }: NodeProps) {
+  const d = data as unknown as FlowNodeData;
+  const cfg = d.config.kind === "ado-pr-write" ? d.config.config : null;
+  const exec = useExecState(id);
+  const subtitle = cfg?.setVote ? (cfg.defaultVote as string) ?? "vote" : "comments only";
+  return (
+    <BaseNode kind="ado-pr-write" label={d.label} selected={!!selected} subtitle={subtitle} {...exec} />
+  );
+}
+
 // ── Node type map for React Flow ─────────────────────────────────
 
 export const nodeTypes = {
@@ -370,4 +400,6 @@ export const nodeTypes = {
   memory: MemoryNode,
   handoff: HandoffNode,
   "project-context": ProjectContextNode,
+  "ado-pr-read": AdoPrReadNode,
+  "ado-pr-write": AdoPrWriteNode,
 };

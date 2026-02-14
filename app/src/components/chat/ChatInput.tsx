@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from "react";
-import { Send, Workflow, ChevronDown, MessageCircle, Paperclip, X } from "lucide-react";
+import { Send, Square, Workflow, ChevronDown, MessageCircle, Paperclip, X } from "lucide-react";
 import type { FlowSummary, ImageAttachment } from "../../lib/types";
 import "./ChatInput.css";
 
@@ -10,6 +10,10 @@ interface ChatInputProps {
   selectedFlowId?: string | null;
   onFlowSelect?: (flowId: string | null) => void;
   isFlowRunning?: boolean;
+  /** Whether the AI is currently streaming a response */
+  isStreaming?: boolean;
+  /** Callback to cancel the current operation */
+  onCancel?: () => void;
 }
 
 function readFileAsDataUrl(file: File): Promise<string> {
@@ -28,6 +32,8 @@ export function ChatInput({
   selectedFlowId = null,
   onFlowSelect,
   isFlowRunning = false,
+  isStreaming = false,
+  onCancel,
 }: ChatInputProps) {
   const [text, setText] = useState("");
   const [showDropdown, setShowDropdown] = useState(false);
@@ -217,14 +223,24 @@ export function ChatInput({
           >
             <Paperclip size={16} />
           </button>
-          <button
-            className="chat-send-btn"
-            onClick={handleSend}
-            disabled={effectiveDisabled || (!text.trim() && attachedImages.length === 0)}
-            title={selectedFlow ? `Run ${selectedFlow.name}` : "Send message"}
-          >
-            <Send size={16} />
-          </button>
+          {isStreaming || isFlowRunning ? (
+            <button
+              className="chat-stop-btn"
+              onClick={onCancel}
+              title="Stop generation"
+            >
+              <Square size={14} />
+            </button>
+          ) : (
+            <button
+              className="chat-send-btn"
+              onClick={handleSend}
+              disabled={effectiveDisabled || (!text.trim() && attachedImages.length === 0)}
+              title={selectedFlow ? `Run ${selectedFlow.name}` : "Send message"}
+            >
+              <Send size={16} />
+            </button>
+          )}
         </div>
       </div>
     </div>

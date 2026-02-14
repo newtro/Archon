@@ -2,7 +2,7 @@ import { useState, useCallback, useRef } from "react";
 import type { WSMessageToSidecar, FlowExecutionEvent, NodeOutput, HistoryMessage } from "../lib/types";
 import type { FlowDefinition } from "../lib/flow-types";
 
-export type NodeExecState = "idle" | "running" | "streaming" | "completed" | "error";
+export type NodeExecState = "idle" | "running" | "streaming" | "completed" | "error" | "review";
 export type FlowExecStatus = "idle" | "running" | "completed" | "error";
 
 export interface NodeExecInfo {
@@ -176,7 +176,16 @@ export function useFlowExecution(send: (msg: WSMessageToSidecar) => void) {
         break;
 
       case "human_review_requested":
-        // For MVP, auto-approve (the sidecar already does this)
+        setExecState((prev) => ({
+          ...prev,
+          nodeStates: {
+            ...prev.nodeStates,
+            [event.nodeId]: {
+              state: "review",
+              streamingText: "",
+            },
+          },
+        }));
         break;
     }
   }, []);

@@ -32,6 +32,11 @@ export interface ThinkingBlock {
   isStreaming: boolean;
 }
 
+/** A content block for interleaving text and tool calls in display order */
+export type ContentBlock =
+  | { type: "text"; text: string }
+  | { type: "tool_call"; toolCallId: string };
+
 export interface ChatMessage {
   id: string;
   role: MessageRole;
@@ -52,6 +57,8 @@ export interface ChatMessage {
   costUsd?: number;
   /** Image attachments (user messages) */
   images?: ImageAttachment[];
+  /** Ordered content blocks for inline rendering of text + tool calls */
+  contentBlocks?: ContentBlock[];
 }
 
 /** Log entry status for in-progress tracking */
@@ -167,6 +174,7 @@ export type WSMessageToSidecar =
   | { type: "ping" }
   | { type: "execute_flow"; flow: unknown; input: string; history?: HistoryMessage[]; sessionId?: string }
   | { type: "cancel_flow"; executionId: string }
+  | { type: "resolve_review"; nodeId: string; approved: boolean; feedback?: string; editedContent?: string }
   | { type: "get_context_raw"; executionId: string; nodeId: string }
   // Git operations
   | { type: "git_status" }
@@ -188,7 +196,8 @@ export type WSMessageToSidecar =
   | { type: "git_start_watching" }
   | { type: "git_stop_watching" }
   | { type: "git_generate_commit_msg" }
-  | { type: "git_show"; hash: string };
+  | { type: "git_show"; hash: string }
+  | { type: "set_ado_settings"; orgUrl: string; pat: string; defaultProject?: string };
 
 /** Context Agent transparency events */
 export type ContextAgentEvent =
@@ -321,6 +330,7 @@ export type WSMessageFromSidecar =
   | { type: "thinking_delta"; messageId: string; thinkingId: string; delta: string }
   | { type: "thinking_done"; messageId: string; thinkingId: string }
   | { type: "tool_call_start"; messageId: string; toolCall: ToolCall }
+  | { type: "tool_call_update"; messageId: string; toolCallId: string; args: Record<string, unknown> }
   | { type: "tool_call_done"; messageId: string; toolCallId: string; result: string; status: ToolCallStatus; durationMs: number }
   | { type: "debug_log"; entry: LogEntry }
   | { type: "error"; message: string }
@@ -362,10 +372,19 @@ export type FlowExecutionEvent =
   | { type: "node_completed"; executionId: string; nodeId: string; output: NodeOutput }
   | { type: "node_error"; executionId: string; nodeId: string; error: string }
   | { type: "node_tool_call"; executionId: string; nodeId: string; toolCall: ToolCall }
+  | { type: "node_tool_args_update"; executionId: string; nodeId: string; toolCallId: string; args: Record<string, unknown> }
   | { type: "node_tool_result"; executionId: string; nodeId: string; toolCallId: string; result: string; status: ToolCallStatus; durationMs: number }
   | { type: "flow_completed"; executionId: string; result: string; state: unknown }
   | { type: "flow_error"; executionId: string; error: string }
-  | { type: "human_review_requested"; executionId: string; nodeId: string; prompt: string };
+  | {
+      type: "human_review_requested";
+      executionId: string;
+      nodeId: string;
+      nodeLabel: string;
+      prompt: string;
+      content: string;
+      contentType: "text" | "json" | "markdown";
+    };
 
 /** Recent project entry for startup page */
 export interface RecentProject {

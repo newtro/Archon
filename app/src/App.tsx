@@ -23,6 +23,7 @@ import { useFlowExecution } from "./hooks/useFlowExecution";
 import { useContextView } from "./hooks/useContextView";
 import { useSidecarHealth } from "./hooks/useSidecarHealth";
 import { useWorkspace } from "./contexts/WorkspaceContext";
+import { clearCompletedTools } from "./lib/tool-completion-store";
 import { getSetting, setSetting } from "./lib/store";
 import { listFlows, loadFlow } from "./lib/flow-storage";
 import { createSession, saveMessage, loadSessionMessages, deleteSession as deleteSessionDb } from "./lib/chat-storage";
@@ -156,27 +157,58 @@ function App() {
     switch (event.type) {
       case "node_streaming":
         setMessages((prev) =>
-          prev.map((m) =>
-            m.id === flowMsgId
-              ? { ...m, content: m.content + event.delta }
-              : m
-          )
+          prev.map((m) => {
+            if (m.id !== flowMsgId) return m;
+            const blocks = [...(m.contentBlocks || [])];
+            const lastBlock = blocks[blocks.length - 1];
+            if (lastBlock && lastBlock.type === "text") {
+              blocks[blocks.length - 1] = { type: "text", text: lastBlock.text + event.delta };
+            } else {
+              blocks.push({ type: "text", text: event.delta });
+            }
+            return { ...m, content: m.content + event.delta, contentBlocks: blocks };
+          })
         );
         break;
 
       case "node_tool_call":
         setMessages((prev) =>
-          prev.map((m) =>
-            m.id === flowMsgId
-              ? { ...m, toolCalls: [...(m.toolCalls || []), event.toolCall] }
-              : m
-          )
+          prev.map((m) => {
+            if (m.id !== flowMsgId) return m;
+            const blocks = [...(m.contentBlocks || [])];
+            blocks.push({ type: "tool_call", toolCallId: event.toolCall.id });
+            return {
+              ...m,
+              toolCalls: [...(m.toolCalls || []), event.toolCall],
+              contentBlocks: blocks,
+            };
+          })
+        );
+        break;
+
+      case "node_tool_args_update":
+        setMessages((prev) =>
+          prev.map((m) => {
+            if (m.id !== flowMsgId) return m;
+            return {
+              ...m,
+              toolCalls: (m.toolCalls || []).map((tc) =>
+                tc.id === event.toolCallId
+                  ? { ...tc, args: event.args }
+                  : tc
+              ),
+            };
+          })
         );
         break;
 
       case "node_tool_result":
-        setMessages((prev) =>
-          prev.map((m) => {
+        console.log(`[flow-ui] node_tool_result: toolCallId=${event.toolCallId}, status=${event.status}, durationMs=${event.durationMs}, flowMsgId=${flowMsgId}`);
+        setMessages((prev) => {
+          const msg = prev.find((m) => m.id === flowMsgId);
+          const matchedTc = msg?.toolCalls?.find((tc) => tc.id === event.toolCallId);
+          console.log(`[flow-ui] message found: ${!!msg}, tool found: ${!!matchedTc}, toolIds: ${msg?.toolCalls?.map((tc) => tc.id).join(", ")}`);
+          return prev.map((m) => {
             if (m.id !== flowMsgId) return m;
             return {
               ...m,
@@ -186,30 +218,63 @@ function App() {
                   : tc
               ),
             };
-          })
-        );
+          });
+        });
         break;
 
       case "flow_completed":
         setMessages((prev) =>
-          prev.map((m) =>
-            m.id === flowMsgId
-              ? { ...m, content: event.result || m.content || "(Flow completed)", isStreaming: false }
-              : m
-          )
+          prev.map((m) => {
+            if (m.id !== flowMsgId) return m;
+            // Mark any remaining "loading" tool calls as "success" (safety net)
+            const toolCalls = (m.toolCalls || []).map((tc) =>
+              tc.status === "loading"
+                ? { ...tc, status: "success" as const, durationMs: tc.durationMs ?? Date.now() - tc.startedAt }
+                : tc
+            );
+            // Append final result text to contentBlocks if present
+            const finalContent = event.result || m.content || "(Flow completed)";
+            let blocks = m.contentBlocks;
+            if (blocks && event.result && event.result !== m.content) {
+              blocks = [...blocks];
+              const lastBlock = blocks[blocks.length - 1];
+              if (lastBlock && lastBlock.type === "text") {
+                // Replace last text block with full content if result replaces it
+              } else {
+                blocks.push({ type: "text", text: event.result });
+              }
+            }
+            return { ...m, content: finalContent, isStreaming: false, toolCalls, contentBlocks: blocks };
+          })
         );
         flowChatMessageRef.current = null;
         break;
 
       case "flow_error":
         setMessages((prev) =>
-          prev.map((m) =>
-            m.id === flowMsgId
-              ? { ...m, content: `Flow error: ${event.error}`, isStreaming: false }
-              : m
-          )
+          prev.map((m) => {
+            if (m.id !== flowMsgId) return m;
+            // Mark any remaining "loading" tool calls as "error" (safety net)
+            const toolCalls = (m.toolCalls || []).map((tc) =>
+              tc.status === "loading"
+                ? { ...tc, status: "error" as const, durationMs: tc.durationMs ?? Date.now() - tc.startedAt }
+                : tc
+            );
+            return { ...m, content: `Flow error: ${event.error}`, isStreaming: false, toolCalls };
+          })
         );
         flowChatMessageRef.current = null;
+        break;
+
+      case "human_review_requested":
+        setPendingReview({
+          nodeId: event.nodeId,
+          nodeLabel: event.nodeLabel,
+          executionId: event.executionId,
+          prompt: event.prompt,
+          context: event.content,
+          contentType: event.contentType,
+        });
         break;
     }
   }, [handleFlowEvent]);
@@ -270,6 +335,16 @@ function App() {
       getSetting<string>("openrouterApiKey", "").then((key) => {
         if (key) {
           directSend({ type: "set_openrouter_key", key });
+        }
+      });
+      // Send persisted Azure DevOps settings
+      Promise.all([
+        getSetting<string>("adoOrgUrl", ""),
+        getSetting<string>("adoPat", ""),
+        getSetting<string>("adoDefaultProject", ""),
+      ]).then(([orgUrl, pat, defaultProject]) => {
+        if (orgUrl && pat) {
+          directSend({ type: "set_ado_settings", orgUrl, pat, defaultProject: defaultProject || undefined });
         }
       });
       // Send project root immediately on connect (don't wait for useEffect)
@@ -333,6 +408,7 @@ function App() {
       // Route through flow execution
       const flow = await loadFlow(selectedFlowId);
       if (flow) {
+        clearCompletedTools();
         const flowMsgId = crypto.randomUUID();
         flowChatMessageRef.current = flowMsgId;
         const assistantMsg: ChatMessage = {
@@ -342,6 +418,7 @@ function App() {
           timestamp: Date.now(),
           isStreaming: true,
           model: `Flow: ${flow.name}`,
+          contentBlocks: [],
         };
         setMessages((prev) => [...prev, assistantMsg]);
         runFlow(flow, text, history, sessionIdRef.current ?? undefined);
@@ -356,6 +433,7 @@ function App() {
       }
     } else {
       // Direct chat — include history for fallback, sessionId for SDK resume
+      clearCompletedTools();
       send({
         type: "user_message",
         content: text,
@@ -383,6 +461,13 @@ function App() {
   const handleModelChange = useCallback((model: string) => {
     setActiveModel(model);
   }, []);
+
+  const handleAdoSettingsChange = useCallback(
+    (orgUrl: string, pat: string, defaultProject?: string) => {
+      send({ type: "set_ado_settings", orgUrl, pat, defaultProject });
+    },
+    [send],
+  );
 
   const handleFileSelect = useCallback((path: string, content: string) => {
     setOpenFile({ path, content });
@@ -438,10 +523,36 @@ function App() {
   }, []);
 
   const isFlowRunning = execState.status === "running" && flowChatMessageRef.current !== null;
+  const isStreaming = messages.some((m) => m.isStreaming);
+
+  const handleCancel = useCallback(() => {
+    if (isFlowRunning) {
+      cancelFlow();
+    } else {
+      send({ type: "cancel" });
+    }
+    // Mark all streaming messages as done (UI immediate feedback)
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.isStreaming
+          ? {
+              ...m,
+              isStreaming: false,
+              toolCalls: (m.toolCalls || []).map((tc) =>
+                tc.status === "loading"
+                  ? { ...tc, status: "error" as const, durationMs: tc.durationMs ?? Date.now() - tc.startedAt }
+                  : tc
+              ),
+            }
+          : m
+      )
+    );
+  }, [isFlowRunning, cancelFlow, send]);
 
   const handleNewChat = useCallback(() => {
     setMessages([]);
     setLogEntries([]);
+    clearCompletedTools();
     sessionIdRef.current = null;
     savedMessageIds.current = new Set();
     flowChatMessageRef.current = null;
@@ -477,6 +588,8 @@ function App() {
     selectedFlowId,
     onFlowSelect: setSelectedFlowId,
     isFlowRunning,
+    isStreaming,
+    onCancel: handleCancel,
     onNewChat: handleNewChat,
     sessionId: sessionIdRef.current,
     onLoadSession: handleLoadSession,
@@ -691,14 +804,14 @@ function App() {
         return <FlowRegistryPanel />;
 
       case "settings":
-        return <SettingsPanel onApiKeyChange={handleApiKeyChange} onOpenRouterKeyChange={handleOpenRouterKeyChange} onModelChange={handleModelChange} />;
+        return <SettingsPanel onApiKeyChange={handleApiKeyChange} onOpenRouterKeyChange={handleOpenRouterKeyChange} onModelChange={handleModelChange} onAdoSettingsChange={handleAdoSettingsChange} />;
     }
   };
 
   return (
     <div className="app-layout">
       <TitleBar />
-      <Sidebar activeView={activeView} onViewChange={setActiveView} />
+      <Sidebar activeView={activeView} onViewChange={setActiveView} gitStatus={gitStatus} />
       <main className="main-content">{renderMainContent()}</main>
       <StatusBar
         isConnected={isConnected}
@@ -711,12 +824,23 @@ function App() {
       {pendingReview && (
         <HumanReviewModal
           review={pendingReview}
-          onApprove={(feedback) => {
-            send({ type: "user_message", content: feedback ? `[APPROVED] ${feedback}` : "[APPROVED]" });
+          onApprove={(feedback, editedContent) => {
+            send({
+              type: "resolve_review",
+              nodeId: pendingReview.nodeId,
+              approved: true,
+              feedback: feedback || undefined,
+              editedContent: editedContent || undefined,
+            });
             setPendingReview(null);
           }}
           onReject={(feedback) => {
-            send({ type: "user_message", content: `[REJECTED] ${feedback}` });
+            send({
+              type: "resolve_review",
+              nodeId: pendingReview.nodeId,
+              approved: false,
+              feedback,
+            });
             setPendingReview(null);
           }}
         />

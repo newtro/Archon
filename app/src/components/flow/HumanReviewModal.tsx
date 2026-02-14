@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { UserCheck, ThumbsUp, ThumbsDown, MessageSquare } from "lucide-react";
+import { UserCheck, ThumbsUp, ThumbsDown, MessageSquare, Pencil, Eye } from "lucide-react";
+import { Markdown } from "../../lib/markdown";
 import "./HumanReviewModal.css";
 
 export interface HumanReviewRequest {
@@ -8,17 +9,42 @@ export interface HumanReviewRequest {
   executionId: string;
   prompt: string;
   context?: string;
+  contentType?: "text" | "json" | "markdown";
 }
 
 interface HumanReviewModalProps {
   review: HumanReviewRequest;
-  onApprove: (feedback?: string) => void;
+  onApprove: (feedback?: string, editedContent?: string) => void;
   onReject: (feedback: string) => void;
 }
 
 export function HumanReviewModal({ review, onApprove, onReject }: HumanReviewModalProps) {
   const [feedback, setFeedback] = useState("");
   const [mode, setMode] = useState<"review" | "reject">("review");
+  const [isEditing, setIsEditing] = useState(false);
+  const [editedContent, setEditedContent] = useState(review.context ?? "");
+
+  const hasEdits = editedContent !== (review.context ?? "");
+
+  const handleApprove = () => {
+    onApprove(
+      feedback || undefined,
+      hasEdits ? editedContent : undefined,
+    );
+  };
+
+  // Format JSON content for display
+  const displayContent = (() => {
+    const raw = hasEdits ? editedContent : (review.context ?? "");
+    if (review.contentType === "json" && !isEditing) {
+      try {
+        return JSON.stringify(JSON.parse(raw), null, 2);
+      } catch {
+        return raw;
+      }
+    }
+    return raw;
+  })();
 
   return (
     <div className="review-modal-overlay">
@@ -39,9 +65,42 @@ export function HumanReviewModal({ review, onApprove, onReject }: HumanReviewMod
           </div>
 
           {review.context && (
-            <div className="review-modal-context">
-              <span className="review-modal-label">Context:</span>
-              <pre className="review-modal-context-text">{review.context}</pre>
+            <div className="review-modal-content">
+              <div className="review-modal-content-header">
+                <span className="review-modal-label">
+                  Content for Review
+                  {review.contentType && (
+                    <span className="review-modal-content-type">
+                      {review.contentType.toUpperCase()}
+                    </span>
+                  )}
+                </span>
+                <button
+                  className="review-btn-edit"
+                  onClick={() => setIsEditing(!isEditing)}
+                >
+                  {isEditing ? <Eye size={12} /> : <Pencil size={12} />}
+                  {isEditing ? "Preview" : "Edit"}
+                </button>
+              </div>
+              {isEditing ? (
+                <textarea
+                  className="review-modal-content-editor"
+                  value={editedContent}
+                  onChange={(e) => setEditedContent(e.target.value)}
+                  rows={12}
+                  spellCheck={false}
+                />
+              ) : review.contentType === "markdown" ? (
+                <div className="review-modal-content-markdown">
+                  <Markdown content={displayContent} />
+                </div>
+              ) : (
+                <pre className="review-modal-content-display">{displayContent}</pre>
+              )}
+              {hasEdits && (
+                <span className="review-modal-edited-badge">Modified</span>
+              )}
             </div>
           )}
 
@@ -97,9 +156,9 @@ export function HumanReviewModal({ review, onApprove, onReject }: HumanReviewMod
                 <ThumbsDown size={14} />
                 Reject
               </button>
-              <button className="review-btn-approve" onClick={() => onApprove(feedback || undefined)}>
+              <button className="review-btn-approve" onClick={handleApprove}>
                 <ThumbsUp size={14} />
-                Approve
+                {hasEdits ? "Approve with Edits" : "Approve"}
               </button>
             </>
           )}

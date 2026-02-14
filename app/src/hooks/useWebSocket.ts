@@ -3,6 +3,7 @@ import type { WSMessageToSidecar, WSMessageFromSidecar, ChatMessage, FlowExecuti
 import type { FlowDefinition } from "../lib/flow-types";
 import { loadFlow, saveFlow, deleteFlow as deleteFlowFromDb, listFlowsWithCounts, getFlowByName, applyFlowPatch, saveFlowVersion, type FlowPatch } from "../lib/flow-storage";
 import { autoLayoutFlow } from "../lib/flow-layout";
+import { markToolCompleted } from "../lib/tool-completion-store";
 
 interface UseWebSocketOptions {
   onMessage: (msg: ChatMessage) => void;
@@ -109,8 +110,12 @@ export function useWebSocket({ onMessage, onStatusChange, onFlowEvent, onConnect
       try {
         const data: WSMessageFromSidecar = JSON.parse(event.data);
         handleSidecarMessage(data);
-      } catch {
-        console.error("Failed to parse WebSocket message:", event.data);
+      } catch (err) {
+        console.error("[useWebSocket] Error handling message:", err);
+        try {
+          const parsed = JSON.parse(event.data as string);
+          console.error("[useWebSocket] Message type was:", parsed?.type);
+        } catch { /* ignore */ }
       }
     };
 
@@ -160,6 +165,7 @@ export function useWebSocket({ onMessage, onStatusChange, onFlowEvent, onConnect
             isStreaming: true,
             toolCalls: [],
             thinking: [],
+            contentBlocks: [],
           };
 
           // Log LLM call start on first delta
@@ -175,6 +181,16 @@ export function useWebSocket({ onMessage, onStatusChange, onFlowEvent, onConnect
         }
         const current = streamingMessage.current;
         current.content += data.delta;
+
+        // Append to last text block or create a new one
+        const blocks = current.contentBlocks!;
+        const lastBlock = blocks[blocks.length - 1];
+        if (lastBlock && lastBlock.type === "text") {
+          lastBlock.text += data.delta;
+        } else {
+          blocks.push({ type: "text", text: data.delta });
+        }
+
         onMessageRef.current({ ...current });
         break;
       }
@@ -190,6 +206,7 @@ export function useWebSocket({ onMessage, onStatusChange, onFlowEvent, onConnect
             isStreaming: true,
             toolCalls: [],
             thinking: [],
+            contentBlocks: [],
           };
         }
 
@@ -293,6 +310,7 @@ export function useWebSocket({ onMessage, onStatusChange, onFlowEvent, onConnect
             isStreaming: true,
             toolCalls: [],
             thinking: [],
+            contentBlocks: [],
           };
         }
         if (streamingMessage.current.id === data.messageId) {
@@ -300,6 +318,16 @@ export function useWebSocket({ onMessage, onStatusChange, onFlowEvent, onConnect
             ...(streamingMessage.current.toolCalls || []),
             data.toolCall,
           ];
+
+          // Add tool_call block to interleaved content blocks
+          if (!streamingMessage.current.contentBlocks) {
+            streamingMessage.current.contentBlocks = [];
+          }
+          streamingMessage.current.contentBlocks.push({
+            type: "tool_call",
+            toolCallId: data.toolCall.id,
+          });
+
           onMessageRef.current({ ...streamingMessage.current });
 
           const summary = getToolLogSummary(data.toolCall.name, data.toolCall.args);
@@ -317,7 +345,25 @@ export function useWebSocket({ onMessage, onStatusChange, onFlowEvent, onConnect
         break;
       }
 
+      case "tool_call_update": {
+        // Update tool call args (e.g. when full args arrive after streaming started with empty args)
+        if (streamingMessage.current && streamingMessage.current.id === data.messageId) {
+          const toolCall = streamingMessage.current.toolCalls?.find((t) => t.id === data.toolCallId);
+          if (toolCall) {
+            toolCall.args = data.args;
+            onMessageRef.current({ ...streamingMessage.current });
+          }
+        }
+        break;
+      }
+
       case "tool_call_done": {
+        // Write to global store — ToolCallCard reads this directly
+        markToolCompleted(data.toolCallId, {
+          result: data.result,
+          status: data.status,
+          durationMs: data.durationMs,
+        });
         if (streamingMessage.current && streamingMessage.current.id === data.messageId) {
           const toolCall = streamingMessage.current.toolCalls?.find((t) => t.id === data.toolCallId);
           if (toolCall) {
@@ -467,9 +513,22 @@ export function useWebSocket({ onMessage, onStatusChange, onFlowEvent, onConnect
         break;
       }
 
+      case "node_tool_args_update": {
+        // Tool call args updated (full args arrived after streaming started with empty args)
+        onFlowEventRef.current?.(data as FlowExecutionEvent);
+        break;
+      }
+
       case "node_tool_result": {
         // Tool call completed during flow node execution — update log and forward
         const toolResult = data as FlowExecutionEvent & { type: "node_tool_result" };
+        console.log(`[useWebSocket] node_tool_result received: id=${toolResult.toolCallId}, status=${toolResult.status}, durationMs=${toolResult.durationMs}`);
+        // Write to global store — ToolCallCard reads this directly, bypassing React state
+        markToolCompleted(toolResult.toolCallId, {
+          result: toolResult.result,
+          status: toolResult.status,
+          durationMs: toolResult.durationMs,
+        });
         emitLog({
           update: true,
           correlationId: toolResult.toolCallId,

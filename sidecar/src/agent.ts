@@ -7,6 +7,7 @@ import { ContextAgentManager } from "./context-agent.js";
 import { countTokenBreakdown, resetTokenCounterClient } from "./token-counter.js";
 import { flowToolsServer, setFlowToolsWs, handleFlowToolResponse } from "./flow-tools.js";
 import * as gitManager from "./git-manager.js";
+import { setAdoSettings } from "./ado-client.js";
 
 // Initialize MCP manager (server configs will be provided by the frontend)
 console.log(`[agent] MCP manager ready (${mcpManager.listServers().length} servers)`);
@@ -86,6 +87,8 @@ interface ResolveReviewMessage {
   type: "resolve_review";
   nodeId: string;
   approved: boolean;
+  feedback?: string;
+  editedContent?: string;
 }
 
 interface GetContextRawMessage {
@@ -100,6 +103,13 @@ interface FlowToolResponseMessage {
   success: boolean;
   data?: unknown;
   error?: string;
+}
+
+interface SetAdoSettingsMessage {
+  type: "set_ado_settings";
+  orgUrl: string;
+  pat: string;
+  defaultProject?: string;
 }
 
 // Git message types
@@ -146,6 +156,7 @@ type IncomingMessage =
   | ResolveReviewMessage
   | GetContextRawMessage
   | FlowToolResponseMessage
+  | SetAdoSettingsMessage
   | GitMessage;
 
 function send(ws: WebSocket, data: unknown): void {
@@ -235,7 +246,7 @@ export async function handleMessage(
       break;
 
     case "resolve_review":
-      resolveHumanReview(message.nodeId, message.approved);
+      resolveHumanReview(message.nodeId, message.approved, message.feedback, message.editedContent);
       break;
 
     case "get_context_raw": {
@@ -256,6 +267,12 @@ export async function handleMessage(
         data: message.data,
         error: message.error,
       });
+      break;
+
+    case "set_ado_settings":
+      setAdoSettings(message.orgUrl, message.pat, message.defaultProject);
+      send(ws, { type: "status", status: "ado_settings_set" });
+      console.log("[agent] Azure DevOps settings configured");
       break;
 
     // ── Git operations ────────────────────────────────────────────
@@ -729,6 +746,12 @@ function debugJson(obj: unknown, maxLen = 2000): string {
 interface QueryTracker {
   toolStartTimes: Map<string, number>;
   emittedToolIds: Set<string>;
+  /** Cursor tracking when the last tool finished — the next tool's effective start */
+  lastToolDoneTime?: number;
+  /** Maps content block index to tool ID (for correlating input_json_delta) */
+  blockIndexToToolId: Map<number, string>;
+  /** Accumulated partial JSON per tool ID (from input_json_delta events) */
+  toolInputJsonAccum: Map<string, string>;
   turnCount: number;
   /** System prompt text for context view token breakdown */
   systemPrompt?: string;
@@ -742,6 +765,8 @@ function createQueryTracker(): QueryTracker {
   return {
     toolStartTimes: new Map(),
     emittedToolIds: new Set(),
+    blockIndexToToolId: new Map(),
+    toolInputJsonAccum: new Map(),
     turnCount: 0,
   };
 }
@@ -800,9 +825,15 @@ function handleSDKEvent(ws: WebSocket, messageId: string, event: SDKMessage, fro
 
       // Detect tool_use blocks from content_block_start (earliest detection point)
       if (streamType === "content_block_start") {
+        const blockIndex = streamEvent.index as number | undefined;
         const contentBlock = streamEvent.content_block as Record<string, unknown> | undefined;
         if (contentBlock?.type === "tool_use" && contentBlock.id && contentBlock.name) {
           const toolId = contentBlock.id as string;
+          // Track block index → tool ID mapping for input_json_delta correlation
+          if (tracker && blockIndex != null) {
+            tracker.blockIndexToToolId.set(blockIndex, toolId);
+            tracker.toolInputJsonAccum.set(toolId, "");
+          }
           if (tracker && !tracker.emittedToolIds.has(toolId)) {
             const startedAt = Date.now();
             tracker.emittedToolIds.add(toolId);
@@ -823,6 +854,48 @@ function handleSDKEvent(ws: WebSocket, messageId: string, event: SDKMessage, fro
         }
       }
 
+      // Accumulate input_json_delta for tool arguments
+      if (streamType === "content_block_delta" && streamEvent.delta) {
+        const delta = streamEvent.delta as Record<string, unknown>;
+        if (delta.type === "input_json_delta" && typeof delta.partial_json === "string") {
+          const blockIndex = streamEvent.index as number | undefined;
+          if (tracker && blockIndex != null) {
+            const toolId = tracker.blockIndexToToolId.get(blockIndex);
+            if (toolId) {
+              const prev = tracker.toolInputJsonAccum.get(toolId) ?? "";
+              tracker.toolInputJsonAccum.set(toolId, prev + delta.partial_json);
+            }
+          }
+        }
+      }
+
+      // On content_block_stop, parse accumulated JSON and send args update
+      if (streamType === "content_block_stop") {
+        const blockIndex = streamEvent.index as number | undefined;
+        if (tracker && blockIndex != null) {
+          const toolId = tracker.blockIndexToToolId.get(blockIndex);
+          if (toolId) {
+            const jsonStr = tracker.toolInputJsonAccum.get(toolId);
+            if (jsonStr) {
+              try {
+                const fullArgs = JSON.parse(jsonStr) as Record<string, unknown>;
+                send(ws, {
+                  type: "tool_call_update",
+                  messageId,
+                  toolCallId: toolId,
+                  args: fullArgs,
+                });
+                console.log(`[sdk] TOOL_ARGS updated from stream: ${toolId}`);
+              } catch {
+                // JSON parse failed — args update will come from assistant event
+              }
+            }
+            tracker.toolInputJsonAccum.delete(toolId);
+            tracker.blockIndexToToolId.delete(blockIndex);
+          }
+        }
+      }
+
       // Stream text deltas to the frontend
       if (
         streamType === "content_block_delta" &&
@@ -835,18 +908,33 @@ function handleSDKEvent(ws: WebSocket, messageId: string, event: SDKMessage, fro
           delta: (streamEvent.delta as Record<string, unknown>).text as string,
         });
       }
+
+      // Keep the execution cursor fresh on every stream event so that when the
+      // first user (tool-result) event arrives, lastToolDoneTime is as close
+      // to tool-execution-start as possible.
+      if (tracker) {
+        tracker.lastToolDoneTime = Date.now();
+      }
       break;
     }
 
     case "assistant": {
       // Increment turn counter
-      if (tracker) tracker.turnCount++;
+      if (tracker) {
+        tracker.turnCount++;
+        // Set the execution cursor to now — the first tool starts executing here.
+        // Subsequent tools' start times are set when the previous tool completes,
+        // so each tool's duration reflects only its own execution time.
+        tracker.lastToolDoneTime = Date.now();
+      }
 
-      // Extract tool_use blocks — emit only if not already emitted from stream_event
+      // Extract tool_use blocks — emit start if not already emitted,
+      // or send args update if already emitted from stream (args are empty during streaming)
       if (event.message?.content) {
         for (const block of event.message.content) {
           if (block.type === "tool_use") {
             if (tracker && !tracker.emittedToolIds.has(block.id)) {
+              // Not yet emitted — send full tool_call_start
               const startedAt = Date.now();
               tracker.emittedToolIds.add(block.id);
               tracker.toolStartTimes.set(block.id, startedAt);
@@ -862,6 +950,18 @@ function handleSDKEvent(ws: WebSocket, messageId: string, event: SDKMessage, fro
                 },
               });
               console.log(`[sdk] TOOL_START from assistant: ${block.name} (${block.id})`);
+            } else {
+              // Already emitted from stream — update with full args
+              // (stream content_block_start has empty input, full input is only in assistant event)
+              const fullArgs = block.input as Record<string, unknown>;
+              if (fullArgs && Object.keys(fullArgs).length > 0) {
+                send(ws, {
+                  type: "tool_call_update",
+                  messageId,
+                  toolCallId: block.id,
+                  args: fullArgs,
+                });
+              }
             }
           }
         }
@@ -913,8 +1013,15 @@ function handleSDKEvent(ws: WebSocket, messageId: string, event: SDKMessage, fro
           resultText = msgContent;
         }
 
-        const startTime = tracker?.toolStartTimes.get(event.parent_tool_use_id);
-        const durationMs = startTime ? Date.now() - startTime : 0;
+        // Use the execution cursor (when last tool finished) as this tool's start time,
+        // so each tool's duration reflects only its own execution, not cumulative time.
+        const now = Date.now();
+        const startTime = tracker?.lastToolDoneTime ?? tracker?.toolStartTimes.get(event.parent_tool_use_id);
+        const durationMs = startTime ? now - startTime : 0;
+        // Advance cursor: next tool's start = this tool's end
+        if (tracker) {
+          tracker.lastToolDoneTime = now;
+        }
         tracker?.toolStartTimes.delete(event.parent_tool_use_id);
 
         send(ws, {

@@ -15,6 +15,39 @@ import { runOpenRouterAgent } from "./openrouter-runner.js";
 import { loadProjectContext } from "./context-loader.js";
 import type { ContextAgent } from "./context-agent.js";
 import { countTokenBreakdown, resetTokenCounterClient } from "./token-counter.js";
+import { fetchPrData, writePrReview, type AdoPrWriteInput } from "./ado-client.js";
+
+// ── Node Input Schema Registry (JSON Schema) ──────────────────────
+// Maps node kinds to their expected input JSON Schema.
+// When an LLM node has outgoing edges to a node with an inputSchema,
+// the schema is injected into the LLM's system prompt.
+const NODE_INPUT_SCHEMAS: Partial<Record<string, Record<string, unknown>>> = {
+  "ado-pr-write": {
+    type: "object",
+    description: "Structured code review output for posting to Azure DevOps",
+    properties: {
+      pullRequestId: { type: "number", description: "PR number to write to (pass through from PR Read output)" },
+      summary: { type: "string", description: "Overall review summary comment" },
+      vote: { type: "string", enum: ["approve", "approve-with-suggestions", "wait-for-author", "reject", "no-vote"], description: "Vote decision" },
+      inlineComments: {
+        type: "array",
+        description: "Inline comments on specific code lines",
+        items: {
+          type: "object",
+          properties: {
+            filePath: { type: "string", description: "File path relative to repo root" },
+            lineStart: { type: "number", description: "Starting line number" },
+            lineEnd: { type: "number", description: "Ending line number (optional)" },
+            content: { type: "string", description: "Review comment text" },
+            severity: { type: "string", enum: ["info", "warning", "critical"], description: "Comment severity" },
+          },
+          required: ["filePath", "lineStart", "content"],
+        },
+      },
+    },
+    required: ["pullRequestId"],
+  },
+};
 
 /** Resolve a tool preset to the SDK `tools` option */
 function resolveToolPreset(preset: ToolPreset | undefined): Options["tools"] {
@@ -80,6 +113,56 @@ function getNextNodes(flow: FlowDefinition, nodeId: string, signal: string): Ser
     .filter((n): n is SerializedNode => n !== undefined);
 }
 
+// ── Schema Injection ──────────────────────────────────────────
+
+/**
+ * Build schema injection text for an LLM node by inspecting its downstream nodes.
+ * If any downstream node has an inputSchema in NODE_INPUT_SCHEMAS,
+ * return instruction text to inject into the LLM's system prompt.
+ */
+function buildSchemaInjection(flow: FlowDefinition, nodeId: string): string | null {
+  // Node kinds that pass data through without changing format requirements.
+  // We traverse through these to find schema-bearing nodes further downstream.
+  const passthroughKinds = new Set(["human-review", "transformer", "memory", "handoff", "start", "end"]);
+  const visited = new Set<string>();
+  const schemaTexts: string[] = [];
+
+  function findSchemas(currentNodeId: string): void {
+    if (visited.has(currentNodeId)) return;
+    visited.add(currentNodeId);
+
+    const outEdges = flow.edges.filter((e) => e.source === currentNodeId);
+    for (const edge of outEdges) {
+      const targetNode = flow.nodes.find((n) => n.id === edge.target);
+      if (!targetNode) continue;
+
+      const schema = NODE_INPUT_SCHEMAS[targetNode.kind];
+      if (schema) {
+        schemaTexts.push(
+          `CRITICAL OUTPUT FORMAT REQUIREMENT:
+Your ENTIRE response must be a single valid JSON object conforming to the schema below. This JSON will be consumed by the downstream node "${targetNode.label}" (type: ${targetNode.kind}).
+
+\`\`\`json
+${JSON.stringify(schema, null, 2)}
+\`\`\`
+
+Rules:
+- Output ONLY the raw JSON object — no markdown fences, no explanation, no preamble.
+- Do NOT write "I'll investigate" or any other text before or after the JSON.
+- Do NOT use tools to explore or investigate — just produce the JSON from the information already provided to you.
+- The very first character of your response must be \`{\` and the very last must be \`}\`.`
+        );
+      } else if (passthroughKinds.has(targetNode.kind)) {
+        // Traverse through passthrough nodes to find schema requirements further downstream
+        findSchemas(targetNode.id);
+      }
+    }
+  }
+
+  findSchemas(nodeId);
+  return schemaTexts.length > 0 ? schemaTexts.join("\n\n") : null;
+}
+
 // ── Flow Execution ────────────────────────────────────────────
 
 const activeExecutions = new Map<string, AbortController>();
@@ -96,20 +179,49 @@ const executionStats = new Map<string, CumulativeSessionStats>();
 const rawMessageCache = new Map<string, unknown[]>();  // key: `${executionId}:${nodeId}`
 
 // ── Human Review pending promises ────────────────────────────
-const pendingReviews = new Map<string, { resolve: (approved: boolean) => void }>();
+interface ReviewResolution {
+  approved: boolean;
+  feedback?: string;
+  editedContent?: string;
+}
+
+const pendingReviews = new Map<string, { resolve: (resolution: ReviewResolution) => void }>();
 
 /**
  * Resolve a pending human review by node ID.
  * Called from agent.ts when the frontend sends a `resolve_review` message.
  */
-export function resolveHumanReview(nodeId: string, approved: boolean): void {
+export function resolveHumanReview(
+  nodeId: string,
+  approved: boolean,
+  feedback?: string,
+  editedContent?: string,
+): void {
   const pending = pendingReviews.get(nodeId);
   if (pending) {
-    pending.resolve(approved);
+    pending.resolve({ approved, feedback, editedContent });
     pendingReviews.delete(nodeId);
   } else {
     console.warn(`[flow-engine] No pending review found for node ${nodeId}`);
   }
+}
+
+/** Auto-detect content type for display in the human review modal. */
+function detectContentType(text: string): "text" | "json" | "markdown" {
+  const trimmed = text.trim();
+  if (
+    (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+    (trimmed.startsWith("[") && trimmed.endsWith("]"))
+  ) {
+    try {
+      JSON.parse(trimmed);
+      return "json";
+    } catch { /* not valid JSON */ }
+  }
+  if (/^#{1,6}\s/m.test(trimmed) || /```/.test(trimmed) || /^\*\*/.test(trimmed)) {
+    return "markdown";
+  }
+  return "text";
 }
 
 /** Retrieve cached raw messages for a node (on-demand context view). */
@@ -225,7 +337,7 @@ async function executeNode(
         break;
 
       case "llm":
-        output = await executeLLMNode(ws, node, cfg, input, executionId, abortController, state.projectContext, state.conversationHistory, state.contextAgent as import("./context-agent.js").ContextAgent | undefined);
+        output = await executeLLMNode(ws, flow, node, cfg, input, executionId, abortController, state.projectContext, state.conversationHistory, state.contextAgent as import("./context-agent.js").ContextAgent | undefined);
         break;
 
       case "project-context":
@@ -274,6 +386,14 @@ async function executeNode(
         output = await executeSubFlowNode(ws, node, cfg, input, state, executionId, abortController);
         break;
 
+      case "ado-pr-read":
+        output = await executeAdoPrReadNode(ws, node, cfg, input, executionId);
+        break;
+
+      case "ado-pr-write":
+        output = await executeAdoPrWriteNode(ws, node, cfg, input, executionId);
+        break;
+
       default:
         output = { nodeId: node.id, kind: node.kind, result: input, signal: "success", durationMs: 0 };
     }
@@ -302,6 +422,7 @@ async function executeNode(
 
 async function executeLLMNode(
   ws: WebSocket,
+  flow: FlowDefinition,
   node: SerializedNode,
   cfg: Record<string, unknown>,
   input: string,
@@ -316,21 +437,29 @@ async function executeLLMNode(
   const toolPreset = cfg.toolPreset as ToolPreset | undefined;
   const extraTools = (cfg.tools as string[]) ?? [];
 
-  // Build system prompt: node's own + project context + project root info
+  // Schema injection: check if downstream nodes expect a specific input format
+  const schemaInjection = buildSchemaInjection(flow, node.id);
+
+  // Build system prompt: node's own + project context + project root info + schema injection
   const projectRoot = resolveNodeCwd(cfg);
+  const jsonOutputMode = !!schemaInjection; // When true, strip tools and force JSON-only output
   const systemParts = [
     systemPrompt,
     contextOutput,
-    `You are an AI coding assistant embedded in an IDE. The user's project is located at: ${projectRoot}
+    // Skip the "use your tools" instruction when in JSON output mode — the LLM has no tools
+    jsonOutputMode ? undefined : `You are an AI coding assistant embedded in an IDE. The user's project is located at: ${projectRoot}
 
 When the user says "this app", "the project", "this codebase", or similar, they are referring to THEIR project at that path — not the IDE application itself.
 
 Use your tools (Read, Glob, Grep, etc.) to explore and understand this project. Do NOT rely on prior knowledge about other projects.`,
+    schemaInjection,
   ].filter(Boolean);
   const fullSystemPrompt = systemParts.join("\n\n---\n\n");
 
-  // Resolve tools from preset + any extra tools
-  const resolvedTools = resolveToolPreset(toolPreset);
+  // Resolve tools from preset + any extra tools.
+  // When in JSON output mode (downstream node requires structured input),
+  // strip all tools so the LLM produces only a JSON response.
+  const resolvedTools = jsonOutputMode ? [] : resolveToolPreset(toolPreset);
 
   // Context Agent: classify intent and generate briefing
   // NOTE: handleDirectly is NOT used in flow context — it sends assistant_text
@@ -370,7 +499,8 @@ Use your tools (Read, Glob, Grep, etc.) to explore and understand this project. 
   const provider = (cfg.provider as string) ?? "claude";
   if (provider === "openrouter") {
     return await executeOpenRouterLLMNode(
-      ws, node, cfg, prompt, fullSystemPrompt, toolPreset,
+      ws, node, cfg, prompt, fullSystemPrompt,
+      jsonOutputMode ? "none" : toolPreset, // Strip tools in JSON output mode
       executionId, abortController, contextAgent,
     );
   }
@@ -381,8 +511,8 @@ Use your tools (Read, Glob, Grep, etc.) to explore and understand this project. 
     model: model as "haiku" | "sonnet" | "opus",
     cwd: resolveNodeCwd(cfg),
     tools: resolvedTools,
-    // Also auto-allow any extra MCP/custom tools specified on the node
-    allowedTools: extraTools.length > 0 ? extraTools : [],
+    // Also auto-allow any extra MCP/custom tools specified on the node (disabled in JSON output mode)
+    allowedTools: jsonOutputMode ? [] : (extraTools.length > 0 ? extraTools : []),
     systemPrompt: fullSystemPrompt || undefined,
     // Only load project settings when a real project root is set (avoids picking up IDE settings)
     ...(hasProjectRoot ? { settingSources: ["project" as const] } : {}),
@@ -398,17 +528,29 @@ Use your tools (Read, Glob, Grep, etc.) to explore and understand this project. 
   // Track tool calls for the frontend
   const emittedToolIds = new Set<string>();
   const toolStartTimes = new Map<string, number>();
+  const blockIndexToToolId = new Map<number, string>();
+  const toolInputJsonAccum = new Map<string, string>();
+  let lastToolDoneTime: number | undefined;
+  const eventTypeCounts = new Map<string, number>();
 
   for await (const event of query({ prompt, options })) {
+    eventTypeCounts.set(event.type, (eventTypeCounts.get(event.type) ?? 0) + 1);
+
     if (event.type === "stream_event") {
       const streamEvent = event.event as unknown as Record<string, unknown>;
       const streamType = streamEvent.type as string;
 
       // Detect tool_use blocks from content_block_start (earliest detection point)
       if (streamType === "content_block_start") {
+        const blockIndex = streamEvent.index as number | undefined;
         const contentBlock = streamEvent.content_block as Record<string, unknown> | undefined;
         if (contentBlock?.type === "tool_use" && contentBlock.id && contentBlock.name) {
           const toolId = contentBlock.id as string;
+          // Track block index → tool ID mapping for input_json_delta correlation
+          if (blockIndex != null) {
+            blockIndexToToolId.set(blockIndex, toolId);
+            toolInputJsonAccum.set(toolId, "");
+          }
           if (!emittedToolIds.has(toolId)) {
             const startedAt = Date.now();
             emittedToolIds.add(toolId);
@@ -430,6 +572,49 @@ Use your tools (Read, Glob, Grep, etc.) to explore and understand this project. 
         }
       }
 
+      // Accumulate input_json_delta for tool arguments
+      if (streamType === "content_block_delta" && streamEvent.delta) {
+        const delta = streamEvent.delta as Record<string, unknown>;
+        if (delta.type === "input_json_delta" && typeof delta.partial_json === "string") {
+          const blockIndex = streamEvent.index as number | undefined;
+          if (blockIndex != null) {
+            const toolId = blockIndexToToolId.get(blockIndex);
+            if (toolId) {
+              const prev = toolInputJsonAccum.get(toolId) ?? "";
+              toolInputJsonAccum.set(toolId, prev + delta.partial_json);
+            }
+          }
+        }
+      }
+
+      // On content_block_stop, parse accumulated JSON and send args update
+      if (streamType === "content_block_stop") {
+        const blockIndex = streamEvent.index as number | undefined;
+        if (blockIndex != null) {
+          const toolId = blockIndexToToolId.get(blockIndex);
+          if (toolId) {
+            const jsonStr = toolInputJsonAccum.get(toolId);
+            if (jsonStr) {
+              try {
+                const fullArgs = JSON.parse(jsonStr) as Record<string, unknown>;
+                emitEvent(ws, {
+                  type: "node_tool_args_update",
+                  executionId,
+                  nodeId: node.id,
+                  toolCallId: toolId,
+                  args: fullArgs,
+                });
+                console.log(`[flow-engine] TOOL_ARGS updated: ${toolId}`);
+              } catch {
+                // JSON parse failed — args will come from assistant event
+              }
+            }
+            toolInputJsonAccum.delete(toolId);
+            blockIndexToToolId.delete(blockIndex);
+          }
+        }
+      }
+
       // Stream text deltas to the frontend
       if (
         streamType === "content_block_delta" &&
@@ -445,80 +630,140 @@ Use your tools (Read, Glob, Grep, etc.) to explore and understand this project. 
           delta: text,
         });
       }
+
+      // Keep the execution cursor fresh on every stream event so that when the
+      // first user (tool-result) event arrives, lastToolDoneTime is as close
+      // to tool-execution-start as possible.
+      lastToolDoneTime = Date.now();
     } else if (event.type === "assistant") {
-      // Fallback: extract tool_use blocks not caught from stream_event
+      // Set the execution cursor to now — the first tool starts executing here.
+      lastToolDoneTime = Date.now();
+
+      // Extract tool_use blocks — emit start if not already emitted,
+      // or send args update if already emitted from stream
       if (event.message?.content) {
         for (const block of event.message.content) {
-          if (block.type === "tool_use" && !emittedToolIds.has(block.id)) {
-            const startedAt = Date.now();
-            emittedToolIds.add(block.id);
-            toolStartTimes.set(block.id, startedAt);
-            emitEvent(ws, {
-              type: "node_tool_call",
-              executionId,
-              nodeId: node.id,
-              toolCall: {
-                id: block.id,
-                name: block.name,
-                args: block.input as Record<string, unknown>,
-                status: "loading" as const,
-                startedAt,
-              },
-            });
-            console.log(`[flow-engine] TOOL_START (fallback): ${block.name} (${block.id})`);
-          }
-        }
-      }
-    } else if (event.type === "user") {
-      // Tool result — the SDK executed a tool and this is the result
-      if (event.parent_tool_use_id) {
-        let resultText = "";
-        let isError = false;
-
-        const e = event as unknown as Record<string, unknown>;
-        const msgContent = (event.message as unknown as Record<string, unknown>)?.content;
-        if (Array.isArray(msgContent)) {
-          for (const block of msgContent) {
-            const b = block as Record<string, unknown>;
-            if (b.type === "tool_result") {
-              if (b.is_error) isError = true;
-              const c = b.content;
-              if (typeof c === "string") {
-                resultText = c;
-              } else if (Array.isArray(c)) {
-                resultText = c
-                  .filter((x: Record<string, unknown>) => x.type === "text")
-                  .map((x: Record<string, unknown>) => x.text as string)
-                  .join("\n");
-              } else if (c != null) {
-                resultText = JSON.stringify(c, null, 2);
+          if (block.type === "tool_use") {
+            if (!emittedToolIds.has(block.id)) {
+              // Not yet emitted — send full node_tool_call
+              const startedAt = Date.now();
+              emittedToolIds.add(block.id);
+              toolStartTimes.set(block.id, startedAt);
+              emitEvent(ws, {
+                type: "node_tool_call",
+                executionId,
+                nodeId: node.id,
+                toolCall: {
+                  id: block.id,
+                  name: block.name,
+                  args: block.input as Record<string, unknown>,
+                  status: "loading" as const,
+                  startedAt,
+                },
+              });
+              console.log(`[flow-engine] TOOL_START (fallback): ${block.name} (${block.id})`);
+            } else {
+              // Already emitted — send args update as fallback
+              const fullArgs = block.input as Record<string, unknown>;
+              if (fullArgs && Object.keys(fullArgs).length > 0) {
+                emitEvent(ws, {
+                  type: "node_tool_args_update",
+                  executionId,
+                  nodeId: node.id,
+                  toolCallId: block.id,
+                  args: fullArgs,
+                });
               }
             }
           }
         }
-        if (!resultText) {
-          const raw = e.tool_use_result;
-          if (typeof raw === "string") resultText = raw;
-          else if (raw != null) resultText = JSON.stringify(raw, null, 2);
-        }
-        if (!resultText && typeof msgContent === "string") {
-          resultText = msgContent;
-        }
+      }
+    } else if (event.type === "user") {
+      // Tool result — the SDK executed a tool and this is the result.
+      // Extract tool results from message content blocks (each has its own tool_use_id).
+      // We do NOT gate on event.parent_tool_use_id because it may be null/missing in some SDK versions.
+      const e = event as unknown as Record<string, unknown>;
+      const msgContent = (event.message as unknown as Record<string, unknown>)?.content;
+      let handledToolResult = false;
 
-        const startTime = toolStartTimes.get(event.parent_tool_use_id);
-        const durationMs = startTime ? Date.now() - startTime : 0;
-        toolStartTimes.delete(event.parent_tool_use_id);
+      if (Array.isArray(msgContent)) {
+        for (const block of msgContent) {
+          const b = block as Record<string, unknown>;
+          if (b.type === "tool_result") {
+            // Use tool_use_id from the block itself, fall back to event-level parent_tool_use_id
+            const toolUseId = (b.tool_use_id as string) ?? (e.parent_tool_use_id as string);
+            if (!toolUseId) {
+              console.warn(`[flow-engine] tool_result block without tool_use_id, skipping:`, JSON.stringify(b).slice(0, 200));
+              continue;
+            }
+
+            const isError = !!b.is_error;
+            let resultText = "";
+            const c = b.content;
+            if (typeof c === "string") {
+              resultText = c;
+            } else if (Array.isArray(c)) {
+              resultText = c
+                .filter((x: Record<string, unknown>) => x.type === "text")
+                .map((x: Record<string, unknown>) => x.text as string)
+                .join("\n");
+            } else if (c != null) {
+              resultText = JSON.stringify(c, null, 2);
+            }
+
+            // Per-tool timing using execution cursor
+            const now = Date.now();
+            const cursorTime = lastToolDoneTime;
+            const fallbackTime = toolStartTimes.get(toolUseId);
+            const startRef = cursorTime ?? fallbackTime;
+            const durationMs = startRef ? now - startRef : 0;
+            lastToolDoneTime = now;
+            toolStartTimes.delete(toolUseId);
+
+            emitEvent(ws, {
+              type: "node_tool_result",
+              executionId,
+              nodeId: node.id,
+              toolCallId: toolUseId,
+              result: resultText,
+              status: isError ? ("error" as const) : ("success" as const),
+              durationMs,
+            });
+            console.log(`[flow-engine] TOOL_DONE: ${toolUseId} ${isError ? "ERROR" : "OK"} (${durationMs}ms)`);
+            handledToolResult = true;
+          }
+        }
+      }
+
+      // Fallback: use event-level parent_tool_use_id + tool_use_result if no content blocks matched
+      if (!handledToolResult && e.parent_tool_use_id) {
+        const parentId = e.parent_tool_use_id as string;
+        let resultText = "";
+        const raw = e.tool_use_result;
+        if (typeof raw === "string") resultText = raw;
+        else if (raw != null) resultText = JSON.stringify(raw, null, 2);
+        if (!resultText && typeof msgContent === "string") resultText = msgContent;
+
+        const now = Date.now();
+        const startRef = lastToolDoneTime ?? toolStartTimes.get(parentId);
+        const durationMs = startRef ? now - startRef : 0;
+        lastToolDoneTime = now;
+        toolStartTimes.delete(parentId);
 
         emitEvent(ws, {
           type: "node_tool_result",
           executionId,
           nodeId: node.id,
-          toolCallId: event.parent_tool_use_id,
+          toolCallId: parentId,
           result: resultText,
-          status: isError ? ("error" as const) : ("success" as const),
+          status: "success" as const,
           durationMs,
         });
-        console.log(`[flow-engine] TOOL_DONE: ${event.parent_tool_use_id} ${isError ? "ERROR" : "OK"} (${durationMs}ms)`);
+        console.log(`[flow-engine] TOOL_DONE (fallback): ${parentId} OK (${durationMs}ms)`);
+      }
+
+      if (!handledToolResult && !e.parent_tool_use_id) {
+        console.log(`[flow-engine] USER event with no tool results: keys=${Object.keys(e).join(",")}, parent_tool_use_id=${e.parent_tool_use_id}, content_type=${Array.isArray(msgContent) ? "array" : typeof msgContent}`);
       }
     } else if (event.type === "result") {
       totalCost = event.total_cost_usd ?? 0;
@@ -627,6 +872,10 @@ Use your tools (Read, Glob, Grep, etc.) to explore and understand this project. 
       });
     }
   }
+
+  // Log event type summary for debugging
+  const eventSummary = Array.from(eventTypeCounts.entries()).map(([k, v]) => `${k}=${v}`).join(", ");
+  console.log(`[flow-engine] SDK event summary for node ${node.id}: ${eventSummary} | tools emitted: ${emittedToolIds.size}`);
 
   // Context Agent: ingest result to update structured state
   if (contextAgent) {
@@ -1098,25 +1347,36 @@ async function executeHumanReviewNode(
   executionId: string,
 ): Promise<NodeOutput> {
   const prompt = (cfg.prompt as string) ?? "Please review and approve.";
+  const contentType = detectContentType(input);
 
   emitEvent(ws, {
     type: "human_review_requested",
     executionId,
     nodeId: node.id,
-    prompt: `${prompt}\n\nContent for review:\n${input}`,
+    nodeLabel: node.label,
+    prompt,
+    content: input,
+    contentType,
   });
 
   // Pause execution until the frontend sends a resolve_review message
-  const approved = await new Promise<boolean>((resolve) => {
+  const resolution = await new Promise<ReviewResolution>((resolve) => {
     pendingReviews.set(node.id, { resolve });
   });
+
+  // Use edited content if provided, otherwise pass through original input
+  const resultContent = resolution.editedContent ?? input;
 
   return {
     nodeId: node.id,
     kind: "human-review",
-    result: input,
-    signal: approved ? "success" : "fail",
-    data: { approved },
+    result: resultContent,
+    signal: resolution.approved ? "success" : "fail",
+    data: {
+      approved: resolution.approved,
+      ...(resolution.feedback ? { feedback: resolution.feedback } : {}),
+      ...(resolution.editedContent ? { edited: true } : {}),
+    },
     durationMs: 0,
   };
 }
@@ -1318,4 +1578,299 @@ async function executeSubFlowNode(
     },
     durationMs: 0,
   };
+}
+
+// ── ADO PR Read Node ─────────────────────────────────────────
+
+async function executeAdoPrReadNode(
+  ws: WebSocket,
+  node: SerializedNode,
+  cfg: Record<string, unknown>,
+  input: string,
+  executionId: string,
+): Promise<NodeOutput> {
+  const projectName = (cfg.projectName as string) ?? "";
+  const repositoryName = (cfg.repositoryName as string) || projectName;
+  const trackIterations = (cfg.trackIterations as boolean) ?? false;
+  const lastReviewedIteration = (cfg.lastReviewedIteration as number) ?? undefined;
+
+  if (!projectName) {
+    return {
+      nodeId: node.id,
+      kind: "ado-pr-read",
+      result: JSON.stringify({ error: "Project name must be configured" }),
+      signal: "error",
+      durationMs: 0,
+    };
+  }
+
+  // Extract PR number from upstream input
+  const prNumber = extractPrNumber(input);
+  if (!prNumber) {
+    return {
+      nodeId: node.id,
+      kind: "ado-pr-read",
+      result: JSON.stringify({ error: `Could not extract PR number from input: "${input.slice(0, 200)}"` }),
+      signal: "error",
+      durationMs: 0,
+    };
+  }
+
+  emitEvent(ws, { type: "node_streaming", executionId, nodeId: node.id, delta: `Fetching PR #${prNumber} from ${projectName}/${repositoryName}...` });
+
+  try {
+    const { data, signal } = await fetchPrData(
+      projectName,
+      repositoryName,
+      prNumber,
+      trackIterations ? lastReviewedIteration : undefined,
+    );
+
+    // Update lastReviewedIteration if tracking is enabled
+    if (trackIterations && data.iterations.length > 0) {
+      const latestIteration = Math.max(...data.iterations.map((i) => i.id));
+      // Note: This updates the in-memory config. The frontend should persist this
+      // via the config update mechanism when the flow is saved.
+      (cfg as Record<string, unknown>).lastReviewedIteration = latestIteration;
+    }
+
+    const resultJson = JSON.stringify(data, null, 2);
+
+    return {
+      nodeId: node.id,
+      kind: "ado-pr-read",
+      result: resultJson,
+      signal,
+      data: { prNumber, projectName, repositoryName },
+      durationMs: 0,
+    };
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    return {
+      nodeId: node.id,
+      kind: "ado-pr-read",
+      result: JSON.stringify({ error: errMsg }),
+      signal: "error",
+      durationMs: 0,
+    };
+  }
+}
+
+// ── ADO PR Write Node ────────────────────────────────────────
+
+async function executeAdoPrWriteNode(
+  ws: WebSocket,
+  node: SerializedNode,
+  cfg: Record<string, unknown>,
+  input: string,
+  executionId: string,
+): Promise<NodeOutput> {
+  const projectName = (cfg.projectName as string) ?? "";
+  const repositoryName = (cfg.repositoryName as string) || projectName;
+  const requireHumanApproval = (cfg.requireHumanApproval as boolean) ?? true;
+  const postSummaryComment = (cfg.postSummaryComment as boolean) ?? true;
+  const postInlineComments = (cfg.postInlineComments as boolean) ?? true;
+  const setVote = (cfg.setVote as boolean) ?? true;
+  const defaultVote = (cfg.defaultVote as string) ?? "approve-with-suggestions";
+  const threadStatus = (cfg.threadStatus as string) ?? "active";
+
+  if (!projectName) {
+    return {
+      nodeId: node.id,
+      kind: "ado-pr-write",
+      result: JSON.stringify({ error: "Project name must be configured" }),
+      signal: "error",
+      durationMs: 0,
+    };
+  }
+
+  // Parse the structured review input from the upstream LLM node.
+  // The input may be raw JSON, or JSON embedded in surrounding text/markdown.
+  let writeInput: AdoPrWriteInput;
+  try {
+    writeInput = extractJsonFromInput<AdoPrWriteInput>(input);
+    if (!writeInput.pullRequestId) {
+      throw new Error("Missing pullRequestId in parsed JSON");
+    }
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    return {
+      nodeId: node.id,
+      kind: "ado-pr-write",
+      result: JSON.stringify({ error: `Failed to parse review input: ${errMsg}. Expected JSON with pullRequestId, summary, vote, and inlineComments fields.` }),
+      signal: "error",
+      durationMs: 0,
+    };
+  }
+
+  // Human approval gate
+  if (requireHumanApproval) {
+    const previewText = buildWritePreview(writeInput);
+    emitEvent(ws, {
+      type: "human_review_requested",
+      executionId,
+      nodeId: node.id,
+      nodeLabel: node.label,
+      prompt: `Review the following before posting to Azure DevOps PR #${writeInput.pullRequestId}:`,
+      content: previewText,
+      contentType: "text",
+    });
+
+    const resolution = await new Promise<ReviewResolution>((resolve) => {
+      pendingReviews.set(node.id, { resolve });
+    });
+
+    if (!resolution.approved) {
+      return {
+        nodeId: node.id,
+        kind: "ado-pr-write",
+        result: JSON.stringify({
+          status: "blocked",
+          reason: resolution.feedback || "Human reviewer rejected the proposed comments",
+        }),
+        signal: "blocked",
+        durationMs: 0,
+      };
+    }
+
+    // If the reviewer edited the content, attempt to re-parse as JSON
+    if (resolution.editedContent) {
+      try {
+        const edited = JSON.parse(resolution.editedContent);
+        Object.assign(writeInput, edited);
+      } catch {
+        console.warn("[flow-engine] Could not parse edited review content as JSON, using original");
+      }
+    }
+  }
+
+  emitEvent(ws, { type: "node_streaming", executionId, nodeId: node.id, delta: `Posting review to PR #${writeInput.pullRequestId}...` });
+
+  try {
+    const { result, signal } = await writePrReview(
+      projectName,
+      repositoryName,
+      writeInput,
+      { postSummaryComment, postInlineComments, setVote, defaultVote, threadStatus },
+    );
+
+    return {
+      nodeId: node.id,
+      kind: "ado-pr-write",
+      result: JSON.stringify(result, null, 2),
+      signal,
+      data: { prNumber: writeInput.pullRequestId, threadsCreated: result.threadsCreated, voteSet: result.voteSet },
+      durationMs: 0,
+    };
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    return {
+      nodeId: node.id,
+      kind: "ado-pr-write",
+      result: JSON.stringify({ error: errMsg }),
+      signal: "error",
+      durationMs: 0,
+    };
+  }
+}
+
+// ── Helpers for ADO nodes ────────────────────────────────────
+
+/**
+ * Extract a JSON object from input that may contain surrounding text.
+ * Tries: raw JSON parse → JSON inside markdown fences → first `{...}` block.
+ */
+function extractJsonFromInput<T>(input: string): T {
+  const trimmed = input.trim();
+
+  // 1. Try direct parse
+  try {
+    return JSON.parse(trimmed) as T;
+  } catch { /* continue */ }
+
+  // 2. Try extracting from markdown code fences: ```json ... ``` or ``` ... ```
+  const fenceMatch = trimmed.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
+  if (fenceMatch) {
+    try {
+      return JSON.parse(fenceMatch[1].trim()) as T;
+    } catch { /* continue */ }
+  }
+
+  // 3. Try finding the outermost { ... } block using brace matching
+  const firstBrace = trimmed.indexOf("{");
+  if (firstBrace >= 0) {
+    let depth = 0;
+    let inString = false;
+    let escape = false;
+    for (let i = firstBrace; i < trimmed.length; i++) {
+      const ch = trimmed[i];
+      if (escape) { escape = false; continue; }
+      if (ch === "\\") { escape = true; continue; }
+      if (ch === '"') { inString = !inString; continue; }
+      if (inString) continue;
+      if (ch === "{") depth++;
+      else if (ch === "}") {
+        depth--;
+        if (depth === 0) {
+          const candidate = trimmed.slice(firstBrace, i + 1);
+          try {
+            return JSON.parse(candidate) as T;
+          } catch { /* continue searching */ }
+        }
+      }
+    }
+  }
+
+  throw new Error(`Input does not contain valid JSON. Received: ${trimmed.slice(0, 120)}...`);
+}
+
+/** Extract a PR number from user input. Supports bare numbers, "#123", "PR 123", or ADO URLs. */
+function extractPrNumber(input: string): number | null {
+  // Try parsing as a bare JSON object with pullRequestId
+  try {
+    const parsed = JSON.parse(input);
+    if (parsed?.pullRequest?.id) return parsed.pullRequest.id;
+    if (parsed?.pullRequestId) return parsed.pullRequestId;
+  } catch {
+    // Not JSON, continue with text parsing
+  }
+
+  // Match patterns like "PR #123", "#123", "PR 123", "pull/123", or just a number
+  const patterns = [
+    /(?:PR|pull\s*request)\s*#?\s*(\d+)/i,
+    /pullRequests\/(\d+)/i,
+    /#(\d+)/,
+    /\b(\d+)\b/,
+  ];
+  for (const pattern of patterns) {
+    const match = input.match(pattern);
+    if (match) {
+      const num = parseInt(match[1], 10);
+      if (num > 0) return num;
+    }
+  }
+  return null;
+}
+
+/** Build a human-readable preview of what will be posted to Azure DevOps. */
+function buildWritePreview(input: AdoPrWriteInput): string {
+  const parts: string[] = [];
+
+  if (input.vote) {
+    parts.push(`Vote: ${input.vote}`);
+  }
+
+  if (input.summary) {
+    parts.push(`\nSummary Comment:\n${input.summary}`);
+  }
+
+  if (input.inlineComments?.length) {
+    parts.push(`\nInline Comments (${input.inlineComments.length}):`);
+    for (const c of input.inlineComments) {
+      const severity = c.severity ? `[${c.severity.toUpperCase()}] ` : "";
+      parts.push(`  ${c.filePath}:${c.lineStart}${c.lineEnd ? `-${c.lineEnd}` : ""} — ${severity}${c.content}`);
+    }
+  }
+
+  return parts.join("\n") || "(No review actions)";
 }

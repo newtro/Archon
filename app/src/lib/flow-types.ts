@@ -5,7 +5,7 @@
 
 // ── Node Categories ──────────────────────────────────────────────
 
-export type NodeCategory = "ai" | "execution" | "control" | "context" | "structure";
+export type NodeCategory = "ai" | "execution" | "control" | "context" | "integration" | "structure";
 
 export type NodeKind =
   // AI nodes
@@ -25,6 +25,9 @@ export type NodeKind =
   | "memory"
   | "handoff"
   | "project-context"
+  // Integration nodes
+  | "ado-pr-read"
+  | "ado-pr-write"
   // Structure nodes
   | "start"
   | "end";
@@ -43,6 +46,8 @@ export const NODE_CATEGORY: Record<NodeKind, NodeCategory> = {
   memory: "context",
   handoff: "context",
   "project-context": "context",
+  "ado-pr-read": "integration",
+  "ado-pr-write": "integration",
   start: "structure",
   end: "structure",
 };
@@ -52,10 +57,14 @@ export const CATEGORY_COLORS: Record<NodeCategory, string> = {
   execution: "#22c55e", // green
   control: "#f59e0b",   // amber
   context: "#06b6d4",   // cyan
+  integration: "#6366f1", // indigo
   structure: "#64748b",  // slate
 };
 
 // ── Node Metadata ────────────────────────────────────────────────
+
+/** JSON Schema object describing a node's expected input or output format. */
+export type NodeJsonSchema = Record<string, unknown>;
 
 export interface NodeMeta {
   kind: NodeKind;
@@ -66,6 +75,11 @@ export interface NodeMeta {
   icon: string; // SVG path data
   maxInputs: number;   // -1 = unlimited
   maxOutputs: number;  // -1 = unlimited
+  /** Optional JSON Schema describing what this node expects as input.
+   *  When present, the flow engine injects this into upstream LLM system prompts. */
+  inputSchema?: NodeJsonSchema;
+  /** Optional JSON Schema describing what this node produces as output. */
+  outputSchema?: NodeJsonSchema;
 }
 
 export const NODE_REGISTRY: Record<NodeKind, NodeMeta> = {
@@ -205,6 +219,53 @@ export const NODE_REGISTRY: Record<NodeKind, NodeMeta> = {
     icon: "M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z M9 13h6 M12 10v6",
     maxInputs: 1,
     maxOutputs: 1,
+  },
+
+  // Integration Nodes
+  "ado-pr-read": {
+    kind: "ado-pr-read",
+    label: "ADO PR Read",
+    description: "Fetch pull request data from Azure DevOps (diffs, comments, work items, build status)",
+    category: "integration",
+    color: CATEGORY_COLORS.integration,
+    icon: "M6 3v12 M18 9a3 3 0 100-6 3 3 0 000 6z M6 21a3 3 0 100-6 3 3 0 000 6z M18 9a9 9 0 01-9 9",
+    maxInputs: 1,
+    maxOutputs: -1, // rich signals: success, error, no-changes, draft, merged
+  },
+  "ado-pr-write": {
+    kind: "ado-pr-write",
+    label: "ADO PR Write",
+    description: "Post review comments, inline feedback, and vote status to an Azure DevOps pull request",
+    category: "integration",
+    color: CATEGORY_COLORS.integration,
+    icon: "M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7 M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z",
+    maxInputs: 1,
+    maxOutputs: -1, // rich signals: success, partial, error, blocked
+    inputSchema: {
+      type: "object",
+      description: "Structured code review output for posting to Azure DevOps",
+      properties: {
+        pullRequestId: { type: "number", description: "PR number to write to (pass through from PR Read output)" },
+        summary: { type: "string", description: "Overall review summary comment" },
+        vote: { type: "string", enum: ["approve", "approve-with-suggestions", "wait-for-author", "reject", "no-vote"], description: "Vote decision" },
+        inlineComments: {
+          type: "array",
+          description: "Inline comments on specific code lines",
+          items: {
+            type: "object",
+            properties: {
+              filePath: { type: "string", description: "File path relative to repo root" },
+              lineStart: { type: "number", description: "Starting line number" },
+              lineEnd: { type: "number", description: "Ending line number (optional, defaults to lineStart)" },
+              content: { type: "string", description: "Review comment text" },
+              severity: { type: "string", enum: ["info", "warning", "critical"], description: "Comment severity" },
+            },
+            required: ["filePath", "lineStart", "content"],
+          },
+        },
+      },
+      required: ["pullRequestId"],
+    },
   },
 
   // Structure Nodes
@@ -355,6 +416,39 @@ export interface ProjectContextNodeConfig {
   outputFormat: ProjectContextOutputFormat;
 }
 
+export interface AdoPrReadNodeConfig {
+  /** Azure DevOps project name (static, set in config) */
+  projectName: string;
+  /** Repository name or ID within the project */
+  repositoryName: string;
+  /** Whether to track iterations for incremental reviews */
+  trackIterations: boolean;
+  /** Last reviewed iteration ID (managed by the node during execution) */
+  lastReviewedIteration?: number;
+}
+
+export type AdoPrWriteVote = "approve" | "approve-with-suggestions" | "wait-for-author" | "reject" | "from-input";
+export type AdoPrWriteThreadStatus = "active" | "pending" | "fixed" | "closed";
+
+export interface AdoPrWriteNodeConfig {
+  /** Require human approval before posting (default: true) */
+  requireHumanApproval: boolean;
+  /** Set vote status on the PR */
+  setVote: boolean;
+  /** Default vote value if setVote is true */
+  defaultVote: AdoPrWriteVote;
+  /** Post inline comments from the review */
+  postInlineComments: boolean;
+  /** Post an overall review summary comment */
+  postSummaryComment: boolean;
+  /** Comment thread status for new threads */
+  threadStatus: AdoPrWriteThreadStatus;
+  /** Project name (should match the Read node) */
+  projectName: string;
+  /** Repository name or ID */
+  repositoryName: string;
+}
+
 export interface StartNodeConfig {
   inputSchema?: string;  // optional JSON schema for expected input
 }
@@ -377,6 +471,8 @@ export type FlowNodeConfig =
   | { kind: "memory"; config: MemoryNodeConfig }
   | { kind: "handoff"; config: HandoffNodeConfig }
   | { kind: "project-context"; config: ProjectContextNodeConfig }
+  | { kind: "ado-pr-read"; config: AdoPrReadNodeConfig }
+  | { kind: "ado-pr-write"; config: AdoPrWriteNodeConfig }
   | { kind: "start"; config: StartNodeConfig }
   | { kind: "end"; config: EndNodeConfig };
 
@@ -414,6 +510,10 @@ export function getDefaultConfig(kind: NodeKind): FlowNodeConfig {
       return { kind, config: { briefingPrompt: "Summarize the current state for the next agent.", includeFields: ["task", "decisions", "files"] } };
     case "project-context":
       return { kind, config: { files: [], includePatterns: [], excludePatterns: ["node_modules/**", "dist/**", ".git/**", "__pycache__/**"], respectGitignore: true, maxTokens: 50000, outputFormat: "tree-and-contents" as ProjectContextOutputFormat } };
+    case "ado-pr-read":
+      return { kind, config: { projectName: "", repositoryName: "", trackIterations: false } };
+    case "ado-pr-write":
+      return { kind, config: { requireHumanApproval: true, setVote: true, defaultVote: "approve-with-suggestions" as AdoPrWriteVote, postInlineComments: true, postSummaryComment: true, threadStatus: "active" as AdoPrWriteThreadStatus, projectName: "", repositoryName: "" } };
     case "start":
       return { kind, config: {} };
     case "end":

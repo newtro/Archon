@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
-import { MessageCircle, Layers, SquarePen, History, Trash2 } from "lucide-react";
+import { MessageCircle, Layers, SquarePen, History, Trash2, ClipboardCopy, Check } from "lucide-react";
 import { ChatMessage as ChatMessageComponent } from "./ChatMessage";
 import { ChatInput } from "./ChatInput";
 import { ChatContextMenu } from "./ChatContextMenu";
@@ -20,6 +20,10 @@ interface ChatPanelProps {
   sessionId?: string | null;
   onLoadSession?: (id: string) => void;
   onDeleteSession?: (id: string) => void;
+  /** Whether the AI is currently streaming a response */
+  isStreaming?: boolean;
+  /** Cancel the current AI operation */
+  onCancel?: () => void;
 }
 
 const DENSITY_LABELS: Record<DensityMode, string> = {
@@ -40,7 +44,7 @@ function timeAgo(ts: number): string {
   return new Date(ts).toLocaleDateString();
 }
 
-export function ChatPanel({ messages, onSendMessage, isConnected, flows, selectedFlowId, onFlowSelect, isFlowRunning, onNewChat, sessionId, onLoadSession, onDeleteSession }: ChatPanelProps) {
+export function ChatPanel({ messages, onSendMessage, isConnected, flows, selectedFlowId, onFlowSelect, isFlowRunning, onNewChat, sessionId, onLoadSession, onDeleteSession, isStreaming, onCancel }: ChatPanelProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
@@ -73,6 +77,8 @@ export function ChatPanel({ messages, onSendMessage, isConnected, flows, selecte
     return () => document.removeEventListener("mousedown", handler);
   }, [historyOpen]);
 
+  const [copied, setCopied] = useState(false);
+
   const handleSelectSession = useCallback((id: string) => {
     onLoadSession?.(id);
     setHistoryOpen(false);
@@ -94,6 +100,35 @@ export function ChatPanel({ messages, onSendMessage, isConnected, flows, selecte
     }
     return acc;
   }, []);
+
+  const handleCopyChatLog = useCallback(() => {
+    const log = deduped.map((msg) => ({
+      id: msg.id,
+      role: msg.role,
+      content: msg.content,
+      timestamp: msg.timestamp,
+      model: msg.model,
+      ...(msg.toolCalls && msg.toolCalls.length > 0 ? {
+        toolCalls: msg.toolCalls.map((tc) => ({
+          id: tc.id,
+          name: tc.name,
+          args: tc.args,
+          result: tc.result,
+          status: tc.status,
+          durationMs: tc.durationMs,
+        })),
+      } : {}),
+      ...(msg.thinking && msg.thinking.length > 0 ? {
+        thinking: msg.thinking.map((t) => ({ id: t.id, content: t.content })),
+      } : {}),
+      ...(msg.tokensIn != null ? { tokensIn: msg.tokensIn, tokensOut: msg.tokensOut } : {}),
+      ...(msg.costUsd != null ? { costUsd: msg.costUsd } : {}),
+    }));
+    navigator.clipboard.writeText(JSON.stringify(log, null, 2)).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }, [deduped]);
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -134,6 +169,15 @@ export function ChatPanel({ messages, onSendMessage, isConnected, flows, selecte
         <h2 className="chat-title">Chat</h2>
         <span className="chat-model-badge">Claude Sonnet 4.5</span>
         <span className="chat-spacer" />
+        {deduped.length > 0 && (
+          <button
+            className={`chat-header-btn ${copied ? "chat-copy-success" : ""}`}
+            onClick={handleCopyChatLog}
+            title="Copy chat log as JSON"
+          >
+            {copied ? <Check size={14} /> : <ClipboardCopy size={14} />}
+          </button>
+        )}
         <div className="chat-history-wrapper" ref={historyRef}>
           <button
             className={`chat-header-btn ${historyOpen ? "active" : ""}`}
@@ -249,6 +293,8 @@ export function ChatPanel({ messages, onSendMessage, isConnected, flows, selecte
         selectedFlowId={selectedFlowId}
         onFlowSelect={onFlowSelect}
         isFlowRunning={isFlowRunning}
+        isStreaming={isStreaming}
+        onCancel={onCancel}
       />
       {ctxMenu && (
         <ChatContextMenu

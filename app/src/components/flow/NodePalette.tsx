@@ -16,6 +16,7 @@ const CATEGORIES: { key: NodeCategory; label: string }[] = [
   { key: "execution", label: "Execution" },
   { key: "control", label: "Control Flow" },
   { key: "context", label: "Context" },
+  { key: "integration", label: "Integration" },
 ];
 
 export function NodePalette({ onAddNode }: NodePaletteProps) {

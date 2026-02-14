@@ -198,6 +198,16 @@
   box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.2);
 }
 
+@keyframes node-review-pulse {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.3); }
+  50% { box-shadow: 0 0 0 6px rgba(245, 158, 11, 0.1); }
+}
+
+.flow-node.exec-review {
+  border-color: var(--accent-amber);
+  animation: node-review-pulse 2s ease-in-out infinite;
+}
+
 /* ── Execution Bar (inside node) ─────────────────────────────── */
 
 .flow-node-exec-bar {
@@ -215,6 +225,10 @@
 
 .flow-node-exec-bar.exec-error {
   color: #ef4444;
+}
+
+.flow-node-exec-bar.exec-review {
+  color: var(--accent-amber);
 }
 
 .flow-node-exec-spinner {

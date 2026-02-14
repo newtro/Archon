@@ -8,6 +8,7 @@ export type NodeKind =
   | "tool" | "transformer"
   | "router" | "parallel" | "join" | "human-review" | "sub-flow"
   | "memory" | "handoff" | "project-context"
+  | "ado-pr-read" | "ado-pr-write"
   | "start" | "end";
 
 export type ToolPreset = "none" | "read-only" | "full-access";
@@ -99,10 +100,19 @@ export type FlowExecutionEvent =
   | { type: "node_completed"; executionId: string; nodeId: string; output: NodeOutput }
   | { type: "node_error"; executionId: string; nodeId: string; error: string }
   | { type: "node_tool_call"; executionId: string; nodeId: string; toolCall: FlowToolCall }
+  | { type: "node_tool_args_update"; executionId: string; nodeId: string; toolCallId: string; args: Record<string, unknown> }
   | { type: "node_tool_result"; executionId: string; nodeId: string; toolCallId: string; result: string; status: "success" | "error"; durationMs: number }
   | { type: "flow_completed"; executionId: string; result: string; state: FlowState }
   | { type: "flow_error"; executionId: string; error: string }
-  | { type: "human_review_requested"; executionId: string; nodeId: string; prompt: string };
+  | {
+      type: "human_review_requested";
+      executionId: string;
+      nodeId: string;
+      nodeLabel: string;
+      prompt: string;
+      content: string;
+      contentType: "text" | "json" | "markdown";
+    };
 
 /** Patch model for updating flows via AI tools */
 export interface FlowPatch {

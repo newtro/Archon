@@ -2,11 +2,63 @@ import { useState } from "react";
 import { AlertCircle, Brain, ChevronDown } from "lucide-react";
 import { ToolCallCard } from "./ToolCallCard";
 import { Markdown } from "../../lib/markdown";
-import type { ChatMessage as ChatMessageType } from "../../lib/types";
+import type { ChatMessage as ChatMessageType, ContentBlock, ToolCall } from "../../lib/types";
 import "./ChatMessage.css";
 
 interface ChatMessageProps {
   message: ChatMessageType;
+}
+
+/** Render a single text content block */
+function TextBlock({ text, isLast, isStreaming }: { text: string; isLast: boolean; isStreaming: boolean }) {
+  if (!text) return null;
+  return (
+    <div className="message-content">
+      <div className="message-text">
+        <Markdown content={text} />
+        {isLast && isStreaming && <span className="cursor-blink">|</span>}
+      </div>
+    </div>
+  );
+}
+
+/** Render interleaved content blocks (text + tool calls) in order */
+function InlineContentBlocks({
+  blocks,
+  toolCalls,
+  isStreaming,
+}: {
+  blocks: ContentBlock[];
+  toolCalls: ToolCall[];
+  isStreaming: boolean;
+}) {
+  const toolCallMap = new Map(toolCalls.map((tc) => [tc.id, tc]));
+
+  return (
+    <>
+      {blocks.map((block, idx) => {
+        const isLast = idx === blocks.length - 1;
+        if (block.type === "text") {
+          return (
+            <TextBlock
+              key={`text-${idx}`}
+              text={block.text}
+              isLast={isLast}
+              isStreaming={isStreaming}
+            />
+          );
+        }
+        // tool_call block
+        const tc = toolCallMap.get(block.toolCallId);
+        if (!tc) return null;
+        return (
+          <div key={tc.id} className="message-tools">
+            <ToolCallCard toolCall={tc} />
+          </div>
+        );
+      })}
+    </>
+  );
 }
 
 export function ChatMessage({ message }: ChatMessageProps) {
@@ -22,6 +74,8 @@ export function ChatMessage({ message }: ChatMessageProps) {
       </div>
     );
   }
+
+  const hasContentBlocks = message.contentBlocks && message.contentBlocks.length > 0;
 
   return (
     <div className={`message message-${message.role}`} data-message-id={message.id}>
@@ -65,15 +119,6 @@ export function ChatMessage({ message }: ChatMessageProps) {
         </div>
       )}
 
-      {/* Tool calls */}
-      {message.toolCalls && message.toolCalls.length > 0 && (
-        <div className="message-tools">
-          {message.toolCalls.map((toolCall) => (
-            <ToolCallCard key={toolCall.id} toolCall={toolCall} />
-          ))}
-        </div>
-      )}
-
       {/* Image attachments */}
       {message.images && message.images.length > 0 && (
         <div className="message-images">
@@ -83,14 +128,32 @@ export function ChatMessage({ message }: ChatMessageProps) {
         </div>
       )}
 
-      {/* Message content */}
-      {message.content && (
-        <div className="message-content">
-          <div className="message-text">
-            <Markdown content={message.content} />
-            {message.isStreaming && <span className="cursor-blink">|</span>}
-          </div>
-        </div>
+      {/* Inline content blocks: interleaved text + tool calls */}
+      {hasContentBlocks ? (
+        <InlineContentBlocks
+          blocks={message.contentBlocks!}
+          toolCalls={message.toolCalls || []}
+          isStreaming={!!message.isStreaming}
+        />
+      ) : (
+        <>
+          {/* Legacy fallback: tool calls above text */}
+          {message.toolCalls && message.toolCalls.length > 0 && (
+            <div className="message-tools">
+              {message.toolCalls.map((toolCall) => (
+                <ToolCallCard key={toolCall.id} toolCall={toolCall} />
+              ))}
+            </div>
+          )}
+          {message.content && (
+            <div className="message-content">
+              <div className="message-text">
+                <Markdown content={message.content} />
+                {message.isStreaming && <span className="cursor-blink">|</span>}
+              </div>
+            </div>
+          )}
+        </>
       )}
 
       {/* Metadata footer */}

@@ -252,3 +252,22 @@
   color: var(--text-muted);
   cursor: not-allowed;
 }
+
+.chat-stop-btn {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent-red);
+  border: none;
+  border-radius: var(--radius-md);
+  color: white;
+  cursor: pointer;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+
+.chat-stop-btn:hover {
+  background: #dc2626;
+}

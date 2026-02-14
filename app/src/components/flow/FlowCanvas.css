@@ -2,7 +2,8 @@
 
 .flow-canvas-layout {
   display: flex;
-  height: 100%;
+  flex: 1;
+  min-height: 0;
 }
 
 .flow-canvas-wrapper {
@@ -283,6 +284,24 @@
 /* React Flow edge styling */
 .react-flow__edge-path {
   stroke-width: 2;
+  cursor: pointer;
+  transition: stroke-width 0.15s;
+}
+
+.react-flow__edge:hover .react-flow__edge-path {
+  stroke-width: 3;
+  filter: brightness(1.3);
+}
+
+.react-flow__edge.selected .react-flow__edge-path {
+  stroke-width: 3;
+  filter: brightness(1.5);
+  stroke-dasharray: none;
+}
+
+/* Wider invisible hit area for easier edge clicking */
+.react-flow__edge-interaction {
+  stroke-width: 20;
 }
 
 .react-flow__connection-line {

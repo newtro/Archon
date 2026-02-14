@@ -1,4 +1,5 @@
 import { MessageSquare, Workflow, FolderOpen, Settings, ScrollText, Globe, GitBranch } from "lucide-react";
+import type { GitStatusData } from "../../lib/types";
 import "./Sidebar.css";
 
 export type SidebarView = "startup" | "chat" | "flows" | "files" | "git" | "logs" | "registry" | "settings";
@@ -6,6 +7,7 @@ export type SidebarView = "startup" | "chat" | "flows" | "files" | "git" | "logs
 interface SidebarProps {
   activeView: SidebarView;
   onViewChange: (view: SidebarView) => void;
+  gitStatus?: GitStatusData | null;
 }
 
 const NAV_ITEMS: Array<{ view: SidebarView; icon: typeof MessageSquare; label: string }> = [
@@ -17,7 +19,11 @@ const NAV_ITEMS: Array<{ view: SidebarView; icon: typeof MessageSquare; label: s
   { view: "registry", icon: Globe, label: "Registry" },
 ];
 
-export function Sidebar({ activeView, onViewChange }: SidebarProps) {
+export function Sidebar({ activeView, onViewChange, gitStatus }: SidebarProps) {
+  const gitChangeCount = gitStatus
+    ? gitStatus.staged.length + gitStatus.unstaged.length + gitStatus.untracked.length
+    : 0;
+
   return (
     <aside className="sidebar">
       <nav className="sidebar-nav">
@@ -25,10 +31,13 @@ export function Sidebar({ activeView, onViewChange }: SidebarProps) {
           <button
             key={view}
             className={`sidebar-btn ${activeView === view ? "active" : ""}`}
-            title={label}
+            title={view === "git" && gitStatus?.branch ? `${label} (${gitStatus.branch})` : label}
             onClick={() => onViewChange(view)}
           >
             <Icon size={20} />
+            {view === "git" && gitChangeCount > 0 && (
+              <span className="sidebar-badge">{gitChangeCount > 99 ? "99+" : gitChangeCount}</span>
+            )}
           </button>
         ))}
       </nav>
