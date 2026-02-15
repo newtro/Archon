@@ -309,7 +309,7 @@ export const TOOL_PRESET_DESCRIPTIONS: Record<ToolPreset, string> = {
 
 // ── Provider & Model Metadata ────────────────────────────────────
 
-export type LLMProvider = "claude" | "openrouter";
+export type LLMProvider = "claude" | "openrouter" | "claude-code";
 
 export type ModelId = "haiku" | "sonnet" | "opus";
 
