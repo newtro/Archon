@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
-import { KeyRound, Eye, EyeOff, Cpu, Info, FolderOpen, GitBranch, ExternalLink, Plug } from "lucide-react";
+import { KeyRound, Eye, EyeOff, Cpu, Info, FolderOpen, GitBranch, ExternalLink, Plug, Terminal } from "lucide-react";
 import { open as shellOpen } from "@tauri-apps/plugin-shell";
 import { getSetting, setSetting } from "../../lib/store";
 import { McpConfigSection } from "./McpConfigSection";
+import { useAppState } from "../../contexts/AppStateContext";
 import "./SettingsPanel.css";
 
 interface SettingsPanelProps {
@@ -27,6 +28,9 @@ export function SettingsPanel({ onApiKeyChange, onOpenRouterKeyChange, onModelCh
   const [openrouterKey, setOpenrouterKey] = useState("");
   const [orMasked, setOrMasked] = useState(true);
   const [orSaveStatus, setOrSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
+  // Claude Code CLI
+  const { chatProvider, handleChatProviderChange, claudeCodeStatus, checkClaudeCodeStatus } = useAppState();
+
   // Azure DevOps
   const [adoOrgUrl, setAdoOrgUrl] = useState("");
   const [adoPat, setAdoPat] = useState("");
@@ -264,6 +268,60 @@ export function SettingsPanel({ onApiKeyChange, onOpenRouterKeyChange, onModelCh
           </div>
         </section>
 
+        <section className="settings-section">
+          <h3 className="settings-section-title">
+            <Terminal size={16} />
+            Chat Backend
+          </h3>
+          <p className="settings-description">
+            Choose how Claude runs. <strong>API Key (SDK)</strong> uses your Anthropic API key with per-token billing.{" "}
+            <strong>Claude Code CLI</strong> uses your Anthropic Max subscription — no API key needed.
+          </p>
+          <div className="settings-field">
+            <div className="model-select-group">
+              <button
+                className={`model-option ${chatProvider === "sdk" ? "active" : ""}`}
+                onClick={() => handleChatProviderChange("sdk", model)}
+              >
+                <span className="model-option-label">API Key (SDK)</span>
+                <span className="model-option-desc">Pay per token</span>
+              </button>
+              <button
+                className={`model-option ${chatProvider === "claude-code" ? "active" : ""}`}
+                onClick={() => {
+                  handleChatProviderChange("claude-code", model);
+                  checkClaudeCodeStatus();
+                }}
+              >
+                <span className="model-option-label">Claude Code CLI</span>
+                <span className="model-option-desc">Max subscription</span>
+              </button>
+            </div>
+          </div>
+          {chatProvider === "claude-code" && claudeCodeStatus && (
+            <div className="settings-field" style={{ marginTop: 8 }}>
+              <div style={{ display: "flex", gap: 12, fontSize: 13 }}>
+                <span style={{ color: claudeCodeStatus.installed ? "var(--color-success, #4caf50)" : "var(--color-error, #f44336)" }}>
+                  {claudeCodeStatus.installed ? "✓" : "✗"} CLI {claudeCodeStatus.installed ? "installed" : "not installed"}
+                </span>
+                <span style={{ color: claudeCodeStatus.authenticated ? "var(--color-success, #4caf50)" : "var(--color-error, #f44336)" }}>
+                  {claudeCodeStatus.authenticated ? "✓" : "✗"} {claudeCodeStatus.authenticated ? "Authenticated" : "Not logged in"}
+                </span>
+              </div>
+              {!claudeCodeStatus.installed && (
+                <p className="settings-hint" style={{ marginTop: 6 }}>
+                  Install Claude Code: <code>curl -fsSL https://claude.ai/install.sh | bash</code>
+                </p>
+              )}
+              {claudeCodeStatus.installed && !claudeCodeStatus.authenticated && (
+                <p className="settings-hint" style={{ marginTop: 6 }}>
+                  Log in: <code>claude login</code>
+                </p>
+              )}
+            </div>
+          )}
+        </section>
+
         <McpConfigSection />
 
         <section className="settings-section">
@@ -466,8 +524,8 @@ export function SettingsPanel({ onApiKeyChange, onOpenRouterKeyChange, onModelCh
               <span className="settings-about-value">Tauri v2 + Node.js Sidecar</span>
             </div>
             <div className="settings-about-row">
-              <span className="settings-about-label">SDK</span>
-              <span className="settings-about-value">Claude Agent SDK</span>
+              <span className="settings-about-label">Backend</span>
+              <span className="settings-about-value">{chatProvider === "claude-code" ? "Claude Code CLI" : "Claude Agent SDK"}</span>
             </div>
           </div>
         </section>

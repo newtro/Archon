@@ -93,6 +93,12 @@ export interface AppState {
   handleOpenRouterKeyChange: (key: string) => void;
   handleAdoSettingsChange: (orgUrl: string, pat: string, defaultProject?: string) => void;
 
+  // Claude Code CLI
+  chatProvider: "sdk" | "claude-code";
+  handleChatProviderChange: (provider: "sdk" | "claude-code", model?: string) => void;
+  claudeCodeStatus: { installed: boolean; authenticated: boolean } | null;
+  checkClaudeCodeStatus: () => void;
+
   // Modals
   pendingReview: HumanReviewRequest | null;
   setPendingReview: React.Dispatch<React.SetStateAction<HumanReviewRequest | null>>;
@@ -128,6 +134,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const [activeModel, setActiveModel] = useState<string>("sonnet");
   const [pendingReview, setPendingReview] = useState<HumanReviewRequest | null>(null);
   const [publishingFlow, setPublishingFlow] = useState<FlowDefinition | null>(null);
+  const [chatProvider, setChatProvider] = useState<"sdk" | "claude-code">("sdk");
+  const [claudeCodeStatus, setClaudeCodeStatus] = useState<{ installed: boolean; authenticated: boolean } | null>(null);
 
   // Git
   const [lastGitMessage, setLastGitMessage] = useState<WSMessageFromSidecar | null>(null);
@@ -412,6 +420,12 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         setGitDiff((prev) => prev ? { ...prev, diff: msg.data } : null);
       }
     },
+    onClaudeCodeStatus: (status) => {
+      setClaudeCodeStatus(status);
+    },
+    onClaudeCodeNotInstalled: () => {
+      setClaudeCodeStatus({ installed: false, authenticated: false });
+    },
     onConnect: (directSend) => {
       getSetting<string>("apiKey", "").then((key) => {
         if (key) directSend({ type: "set_api_key", key });
@@ -431,6 +445,16 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (lastProjectRootRef.current) {
         directSend({ type: "set_project_root", path: lastProjectRootRef.current });
       }
+      // Check Claude Code CLI availability and restore saved provider
+      directSend({ type: "check_claude_code" });
+      getSetting<string>("chatProvider", "sdk").then((provider) => {
+        if (provider === "claude-code") {
+          getSetting<string>("model", "sonnet").then((model) => {
+            setChatProvider("claude-code");
+            directSend({ type: "set_chat_provider", provider: "claude-code", model });
+          });
+        }
+      });
     },
   });
 
@@ -533,6 +557,16 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
   const handleAdoSettingsChange = useCallback((orgUrl: string, pat: string, defaultProject?: string) => {
     send({ type: "set_ado_settings", orgUrl, pat, defaultProject });
+  }, [send]);
+
+  const handleChatProviderChange = useCallback(async (provider: "sdk" | "claude-code", model?: string) => {
+    setChatProvider(provider);
+    await setSetting("chatProvider", provider);
+    send({ type: "set_chat_provider", provider, model });
+  }, [send]);
+
+  const checkClaudeCodeStatus = useCallback(() => {
+    send({ type: "check_claude_code" });
   }, [send]);
 
   const handleFileSelect = useCallback((path: string, content: string) => {
@@ -696,6 +730,11 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     handleApiKeyChange,
     handleOpenRouterKeyChange,
     handleAdoSettingsChange,
+
+    chatProvider,
+    handleChatProviderChange,
+    claudeCodeStatus,
+    checkClaudeCodeStatus,
 
     pendingReview,
     setPendingReview,

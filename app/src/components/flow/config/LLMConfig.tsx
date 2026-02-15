@@ -31,9 +31,10 @@ export function LLMConfig({ config, onChange }: LLMConfigProps) {
   const model = (config.model as ModelId) ?? "sonnet";
   const provider = (config.provider as LLMProvider) ?? "claude";
   const isClaude = provider === "claude";
+  const isClaudeCode = provider === "claude-code";
 
   // Token snap points (only for Claude — OpenRouter models have varying limits)
-  const modelMax = isClaude ? (MODEL_INFO[model]?.maxOutput ?? 64_000) : 128_000;
+  const modelMax = (isClaude || isClaudeCode) ? (MODEL_INFO[model]?.maxOutput ?? 64_000) : 128_000;
   const snapPoints = TOKEN_SNAP_POINTS.filter((p) => p <= modelMax);
   const currentTokens = Number(config.maxTokens ?? 4096);
   const snapIndex = snapPoints.reduce(
@@ -138,10 +139,16 @@ export function LLMConfig({ config, onChange }: LLMConfigProps) {
             className={`config-model-btn ${isClaude ? "active" : ""}`}
             onClick={() => onChange({ provider: "claude", openrouterModel: undefined })}
           >
-            Claude
+            Claude SDK
           </button>
           <button
-            className={`config-model-btn ${!isClaude ? "active" : ""}`}
+            className={`config-model-btn ${isClaudeCode ? "active" : ""}`}
+            onClick={() => onChange({ provider: "claude-code", openrouterModel: undefined })}
+          >
+            Claude CLI
+          </button>
+          <button
+            className={`config-model-btn ${provider === "openrouter" ? "active" : ""}`}
             onClick={() => {
               onChange({ provider: "openrouter" });
               if (orModels.length === 0) fetchModels();
@@ -153,7 +160,7 @@ export function LLMConfig({ config, onChange }: LLMConfigProps) {
       </div>
 
       {/* Model Selection */}
-      {isClaude ? (
+      {(isClaude || isClaudeCode) ? (
         <div className="config-field">
           <label className="config-label">Model</label>
           <div className="config-model-group">
@@ -250,7 +257,7 @@ export function LLMConfig({ config, onChange }: LLMConfigProps) {
           ))}
         </div>
         <span className="config-hint">
-          {isClaude
+          {(isClaude || isClaudeCode)
             ? TOOL_PRESET_DESCRIPTIONS[toolPreset]
             : toolPreset === "none"
               ? "Pure text generation, no tool access"
@@ -342,8 +349,8 @@ export function LLMConfig({ config, onChange }: LLMConfigProps) {
         />
         <span className="config-hint">MCP tools or custom tools beyond the preset</span>
       </div>
-      {/* Claude-only options */}
-      {isClaude && (
+      {/* Claude/Claude Code options */}
+      {(isClaude || isClaudeCode) && (
         <>
           <div className="config-field">
             <label className="config-label">

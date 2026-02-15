@@ -12,6 +12,7 @@ import type {
 } from "./flow-types.js";
 import { getGlobalProjectRoot, getOpenRouterApiKey } from "./agent.js";
 import { runOpenRouterAgent } from "./openrouter-runner.js";
+import { runClaudeCodeAgent, type ClaudeCodeOptions } from "./claude-code-runner.js";
 import { loadProjectContext } from "./context-loader.js";
 import type { ContextAgent } from "./context-agent.js";
 import { countTokenBreakdown, resetTokenCounterClient } from "./token-counter.js";
@@ -503,6 +504,33 @@ Use your tools (Read, Glob, Grep, etc.) to explore and understand this project. 
       jsonOutputMode ? "none" : toolPreset, // Strip tools in JSON output mode
       executionId, abortController, contextAgent,
     );
+  }
+
+  // ── Provider branch: Claude Code CLI (subscription-based, no API key needed) ──
+  if (provider === "claude-code") {
+    const ccStartTime = Date.now();
+    try {
+      return await executeClaudeCodeLLMNode(
+        ws, node, cfg, prompt, fullSystemPrompt,
+        jsonOutputMode ? "none" : toolPreset,
+        executionId, abortController, contextAgent,
+      );
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      const isNotInstalled = errMsg.includes("Failed to spawn") || errMsg.includes("ENOENT");
+      const userMessage = isNotInstalled
+        ? "Claude Code CLI is not installed. Install: curl -fsSL https://claude.ai/install.sh | bash && claude login"
+        : `Claude Code CLI error: ${errMsg}`;
+      console.error(`[flow-engine:claude-code] Node ${node.id} failed:`, errMsg);
+      return {
+        nodeId: node.id,
+        kind: "llm",
+        result: "",
+        signal: "error",
+        data: { error: userMessage, provider: "claude-code" },
+        durationMs: Date.now() - ccStartTime,
+      };
+    }
   }
 
   // ── Claude Agent SDK path (unchanged) ──────────────────────────
@@ -1008,6 +1036,128 @@ async function executeOpenRouterLLMNode(
     result,
     signal: "success",
     data: { model: orModel, provider: "openrouter", costUsd: totalCost },
+    durationMs,
+  };
+}
+
+/**
+ * Execute an LLM node using the Claude Code CLI (subscription-based).
+ * No API key required — uses the user's Anthropic Max subscription via CLI auth.
+ */
+async function executeClaudeCodeLLMNode(
+  ws: WebSocket,
+  node: SerializedNode,
+  cfg: Record<string, unknown>,
+  prompt: string,
+  systemPrompt: string,
+  toolPreset: ToolPreset | undefined,
+  executionId: string,
+  abortController: AbortController,
+  contextAgent?: import("./context-agent.js").ContextAgent,
+): Promise<NodeOutput> {
+  let result = "";
+  const startTime = Date.now();
+
+  // Map tool preset to Claude Code permission mode
+  let permissionMode: ClaudeCodeOptions["permissionMode"] = "bypassPermissions";
+  if (toolPreset === "none" || toolPreset === "read-only") {
+    permissionMode = "default";
+  }
+
+  const ccModel = (cfg.claudeCodeModel as string) ?? (cfg.model as string) ?? "sonnet";
+
+  // Track tool calls for Context Agent
+  const toolCallLog: Array<{ name: string; args: Record<string, unknown>; result?: string }> = [];
+
+  const { result: finalResult, totalCost, inputTokens, outputTokens } = await runClaudeCodeAgent(
+    prompt,
+    {
+      model: ccModel,
+      appendSystemPrompt: systemPrompt,
+      cwd: resolveNodeCwd(cfg),
+      abortSignal: abortController.signal,
+      maxTurns: (cfg.maxTurns as number) ?? 50,
+      permissionMode,
+      timeoutMs: (cfg.timeoutMs as number) ?? 10 * 60 * 1000,
+    },
+    {
+      onTextDelta: (text) => {
+        result += text;
+        emitEvent(ws, {
+          type: "node_streaming",
+          executionId,
+          nodeId: node.id,
+          delta: text,
+        });
+      },
+      onToolCallStart: (id, name, args) => {
+        toolCallLog.push({ name, args });
+        emitEvent(ws, {
+          type: "node_tool_call",
+          executionId,
+          nodeId: node.id,
+          toolCall: {
+            id,
+            name,
+            args,
+            status: "loading" as const,
+            startedAt: Date.now(),
+          },
+        });
+        console.log(`[flow-engine:claude-code] TOOL_START: ${name} (${id})`);
+      },
+      onToolCallDone: (id, toolResult, isError, durationMs) => {
+        // Update the last matching tool call entry with its result
+        const entry = toolCallLog.findLast((t) => !t.result);
+        if (entry) entry.result = toolResult;
+        emitEvent(ws, {
+          type: "node_tool_result",
+          executionId,
+          nodeId: node.id,
+          toolCallId: id,
+          result: toolResult,
+          status: isError ? ("error" as const) : ("success" as const),
+          durationMs,
+        });
+        console.log(
+          `[flow-engine:claude-code] TOOL_DONE: ${id} ${isError ? "ERROR" : "OK"} (${durationMs}ms)`,
+        );
+      },
+    },
+  );
+
+  result = finalResult;
+  const durationMs = Date.now() - startTime;
+
+  // Update cumulative execution stats
+  const cumulative = executionStats.get(executionId);
+  if (cumulative) {
+    cumulative.totalCost += totalCost;
+    cumulative.totalInputTokens += inputTokens;
+    cumulative.totalOutputTokens += outputTokens;
+  }
+
+  // Context Agent: ingest result with tool history
+  if (contextAgent) {
+    try {
+      await contextAgent.ingestResult(
+        result,
+        toolCallLog,
+        ccModel,
+        ws,
+        abortController,
+      );
+    } catch (err) {
+      console.warn("[flow-engine:claude-code] Context Agent ingestion error:", err);
+    }
+  }
+
+  return {
+    nodeId: node.id,
+    kind: "llm",
+    result,
+    signal: "success",
+    data: { model: ccModel, provider: "claude-code", costUsd: totalCost },
     durationMs,
   };
 }

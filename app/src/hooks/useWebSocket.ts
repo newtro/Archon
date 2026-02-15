@@ -19,6 +19,10 @@ interface UseWebSocketOptions {
   onFlowPreview?: (flow: FlowDefinition) => void;
   /** Called when a git-related message is received from sidecar */
   onGitMessage?: (msg: WSMessageFromSidecar) => void;
+  /** Called when Claude Code CLI status check returns */
+  onClaudeCodeStatus?: (status: { installed: boolean; authenticated: boolean }) => void;
+  /** Called when Claude Code CLI is not installed (during a chat attempt) */
+  onClaudeCodeNotInstalled?: () => void;
 }
 
 const SIDECAR_PORT = 9399;
@@ -41,7 +45,7 @@ function getToolLogSummary(name: string, args: Record<string, unknown>): string 
   }
 }
 
-export function useWebSocket({ onMessage, onStatusChange, onFlowEvent, onConnect, onLogEntry, onContextViewEvent, onContextClassification, onContextStateUpdate, onContextRawResponse, onFlowPreview, onGitMessage }: UseWebSocketOptions) {
+export function useWebSocket({ onMessage, onStatusChange, onFlowEvent, onConnect, onLogEntry, onContextViewEvent, onContextClassification, onContextStateUpdate, onContextRawResponse, onFlowPreview, onGitMessage, onClaudeCodeStatus, onClaudeCodeNotInstalled }: UseWebSocketOptions) {
   const wsRef = useRef<WebSocket | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<string>("disconnected");
   const reconnectAttempts = useRef(0);
@@ -59,6 +63,8 @@ export function useWebSocket({ onMessage, onStatusChange, onFlowEvent, onConnect
   const onContextRawResponseRef = useRef(onContextRawResponse);
   const onFlowPreviewRef = useRef(onFlowPreview);
   const onGitMessageRef = useRef(onGitMessage);
+  const onClaudeCodeStatusRef = useRef(onClaudeCodeStatus);
+  const onClaudeCodeNotInstalledRef = useRef(onClaudeCodeNotInstalled);
   onMessageRef.current = onMessage;
   onStatusChangeRef.current = onStatusChange;
   onFlowEventRef.current = onFlowEvent;
@@ -70,6 +76,8 @@ export function useWebSocket({ onMessage, onStatusChange, onFlowEvent, onConnect
   onContextRawResponseRef.current = onContextRawResponse;
   onFlowPreviewRef.current = onFlowPreview;
   onGitMessageRef.current = onGitMessage;
+  onClaudeCodeStatusRef.current = onClaudeCodeStatus;
+  onClaudeCodeNotInstalledRef.current = onClaudeCodeNotInstalled;
 
   // Accumulator for streaming assistant messages
   const streamingMessage = useRef<ChatMessage | null>(null);
@@ -412,6 +420,16 @@ export function useWebSocket({ onMessage, onStatusChange, onFlowEvent, onConnect
       }
 
       case "pong":
+        break;
+
+      case "claude_code_status": {
+        const ccData = data as { type: "claude_code_status"; installed: boolean; authenticated: boolean };
+        onClaudeCodeStatusRef.current?.(ccData);
+        break;
+      }
+
+      case "claude_code_not_installed":
+        onClaudeCodeNotInstalledRef.current?.();
         break;
 
       // Flow execution events — emit to both flow handler and log stream

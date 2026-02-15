@@ -8,6 +8,7 @@ import { countTokenBreakdown, resetTokenCounterClient } from "./token-counter.js
 import { flowToolsServer, setFlowToolsWs, handleFlowToolResponse } from "./flow-tools.js";
 import * as gitManager from "./git-manager.js";
 import { setAdoSettings } from "./ado-client.js";
+import { runClaudeCodeAgent, resumeClaudeCodeSession, isClaudeCodeInstalled, isClaudeCodeAuthenticated } from "./claude-code-runner.js";
 
 // Initialize MCP manager (server configs will be provided by the frontend)
 console.log(`[agent] MCP manager ready (${mcpManager.listServers().length} servers)`);
@@ -15,6 +16,27 @@ console.log(`[agent] MCP manager ready (${mcpManager.listServers().length} serve
 // In-memory API key storage (will be replaced with secure storage)
 let apiKey: string | null = null;
 let openrouterApiKey: string | null = null;
+
+// Chat provider mode: "sdk" (Agent SDK, API key) or "claude-code" (CLI, subscription)
+let chatProvider: "sdk" | "claude-code" = "sdk";
+
+// Claude Code chat settings
+let claudeCodeChatModel = "sonnet";
+let claudeCodeChatPermissionMode: "default" | "acceptEdits" | "bypassPermissions" = "bypassPermissions";
+let claudeCodeChatMcpConfigPath: string | undefined;
+
+// Claude Code session map for multi-turn conversations (capped to prevent unbounded growth)
+const claudeCodeSessionMap = new Map<string, string>();
+const CC_SESSION_MAP_MAX = 100;
+
+function setClaudeCodeSession(frontendId: string, ccSessionId: string): void {
+  // Evict oldest entry if at capacity
+  if (claudeCodeSessionMap.size >= CC_SESSION_MAP_MAX && !claudeCodeSessionMap.has(frontendId)) {
+    const oldest = claudeCodeSessionMap.keys().next().value;
+    if (oldest) claudeCodeSessionMap.delete(oldest);
+  }
+  claudeCodeSessionMap.set(frontendId, ccSessionId);
+}
 
 export function getOpenRouterApiKey(): string | null {
   return openrouterApiKey;
@@ -112,6 +134,21 @@ interface SetAdoSettingsMessage {
   defaultProject?: string;
 }
 
+interface SetChatProviderMessage {
+  type: "set_chat_provider";
+  provider: "sdk" | "claude-code";
+  /** Model for claude-code mode (e.g. "sonnet", "opus", "haiku") */
+  model?: string;
+  /** Permission mode for claude-code (default: "bypassPermissions") */
+  permissionMode?: "default" | "acceptEdits" | "bypassPermissions";
+  /** Path to MCP server config JSON */
+  mcpConfigPath?: string;
+}
+
+interface CheckClaudeCodeMessage {
+  type: "check_claude_code";
+}
+
 // Git message types
 interface GitStatusMessage { type: "git_status" }
 interface GitDiffMessage { type: "git_diff"; file?: string; staged?: boolean }
@@ -157,6 +194,8 @@ type IncomingMessage =
   | GetContextRawMessage
   | FlowToolResponseMessage
   | SetAdoSettingsMessage
+  | SetChatProviderMessage
+  | CheckClaudeCodeMessage
   | GitMessage;
 
 function send(ws: WebSocket, data: unknown): void {
@@ -224,7 +263,19 @@ export async function handleMessage(
       break;
 
     case "user_message":
-      await handleUserMessage(ws, message.content, message.images, message.history, message.sessionId);
+      if (chatProvider === "claude-code") {
+        // Claude Code CLI doesn't support inline images — warn the user
+        if (message.images && message.images.length > 0) {
+          send(ws, {
+            type: "assistant_text",
+            messageId: crypto.randomUUID(),
+            delta: "⚠️ Images are not supported in Claude Code CLI mode. Switching to text-only. To use images, switch back to SDK mode.",
+          });
+        }
+        await handleUserMessageClaudeCode(ws, message.content, message.history, message.sessionId);
+      } else {
+        await handleUserMessage(ws, message.content, message.images, message.history, message.sessionId);
+      }
       break;
 
     case "execute_flow":
@@ -274,6 +325,33 @@ export async function handleMessage(
       send(ws, { type: "status", status: "ado_settings_set" });
       console.log("[agent] Azure DevOps settings configured");
       break;
+
+    case "set_chat_provider": {
+      const providerMsg = message as SetChatProviderMessage;
+      chatProvider = providerMsg.provider;
+      if (providerMsg.model) claudeCodeChatModel = providerMsg.model;
+      if (providerMsg.permissionMode) claudeCodeChatPermissionMode = providerMsg.permissionMode;
+      if (providerMsg.mcpConfigPath !== undefined) claudeCodeChatMcpConfigPath = providerMsg.mcpConfigPath || undefined;
+      send(ws, {
+        type: "status",
+        status: "chat_provider_set",
+        provider: chatProvider,
+        model: claudeCodeChatModel,
+        permissionMode: claudeCodeChatPermissionMode,
+      });
+      console.log(`[agent] Chat provider set to: ${chatProvider} (model=${claudeCodeChatModel}, perms=${claudeCodeChatPermissionMode})`);
+      break;
+    }
+
+    case "check_claude_code": {
+      const [installed, authenticated] = await Promise.all([
+        isClaudeCodeInstalled(),
+        isClaudeCodeAuthenticated(),
+      ]);
+      send(ws, { type: "claude_code_status", installed, authenticated });
+      console.log(`[agent] Claude Code check: installed=${installed}, authenticated=${authenticated}`);
+      break;
+    }
 
     // ── Git operations ────────────────────────────────────────────
     case "git_status":
@@ -1199,4 +1277,192 @@ async function emitChatContextEvents(
     delta,
     cumulativeSession: { ...cumulative },
   });
+}
+
+/**
+ * Handle a user message using the Claude Code CLI (subscription-based).
+ * Mirrors handleUserMessage but uses the CLI runner instead of the Agent SDK.
+ */
+async function handleUserMessageClaudeCode(
+  ws: WebSocket,
+  content: string,
+  history?: HistoryMessage[],
+  sessionId?: string,
+): Promise<void> {
+  const messageId = crypto.randomUUID();
+
+  try {
+    activeAbortController = new AbortController();
+
+    // Check if we have a prior Claude Code session to resume
+    const ccSessionId = sessionId ? claudeCodeSessionMap.get(sessionId) : undefined;
+
+    // Build system prompt context — append to Claude Code's built-in prompt
+    // rather than replacing it, so we keep its native project awareness
+    let appendPrompt: string | undefined;
+    if (globalProjectRoot) {
+      let gitContext = "";
+      try {
+        const gitStatus = await gitManager.getStatus();
+        if (gitStatus.isRepo) {
+          const totalChanges = gitStatus.staged.length + gitStatus.unstaged.length + gitStatus.untracked.length;
+          const recentLog = await gitManager.getLog(0, 5);
+          const recentCommits = recentLog.entries
+            .map((e) => `  ${e.hashShort} ${e.message}`)
+            .join("\n");
+          gitContext = `\n\nGit status:
+- Branch: ${gitStatus.branch}${gitStatus.tracking ? ` (tracking ${gitStatus.tracking})` : ""}
+- Ahead: ${gitStatus.ahead}, Behind: ${gitStatus.behind}
+- Changes: ${totalChanges} total (${gitStatus.staged.length} staged, ${gitStatus.unstaged.length} unstaged, ${gitStatus.untracked.length} untracked)
+- Recent commits:\n${recentCommits || "  (none)"}`;
+        }
+      } catch { /* best-effort */ }
+
+      appendPrompt = `The user has opened the project located at: ${globalProjectRoot}
+
+When the user says "this app", "the project", "this codebase", or similar, they are referring to THEIR project at that path — not the IDE application itself.
+
+You also have flow management tools available. When the user asks you to create, modify, delete, list, or describe a flow, workflow, or pipeline, use the flow management tools.${gitContext}`;
+    }
+
+    // Prepend history if not resuming
+    let effectiveContent = content;
+    if (!ccSessionId && history && history.length > 0) {
+      const historyPrefix = history.map((m) => {
+        const role = m.role === "user" ? "User" : "Assistant";
+        return `${role}: ${m.content}`;
+      }).join("\n\n");
+      effectiveContent = `<conversation_history>\n${historyPrefix}\n</conversation_history>\n\n${content}`;
+    }
+
+    // Get or create Context Agent for this session (mirrors SDK path)
+    const contextAgent = sessionId
+      ? contextManager.getOrCreate(sessionId)
+      : undefined;
+
+    // Track tool calls for Context Agent ingestion
+    const toolCallLog: Array<{ id: string; name: string; args: Record<string, unknown>; result?: string; isError?: boolean }> = [];
+
+    // Capture a local ref to the abort controller — the finally block sets activeAbortController
+    // to null, but Context Agent ingestion is async and could race with it
+    const localAbortController = activeAbortController;
+
+    emitDebugLog(ws, "agent:claude-code", `Starting query | messageId=${messageId} | cwd=${globalProjectRoot ?? "(none)"} | resuming=${!!ccSessionId}`);
+
+    const callbacks = {
+      onTextDelta: (text: string) => {
+        send(ws, { type: "assistant_text", messageId, delta: text });
+      },
+      onToolCallStart: (id: string, name: string, args: Record<string, unknown>) => {
+        toolCallLog.push({ id, name, args });
+        send(ws, {
+          type: "tool_call_start",
+          messageId,
+          toolCall: { id, name, args, status: "loading" as const, startedAt: Date.now() },
+        });
+      },
+      onToolCallDone: (id: string, toolResult: string, isError: boolean, durationMs: number) => {
+        // Update tool call log with result
+        const entry = toolCallLog.find((t) => t.id === id);
+        if (entry) {
+          entry.result = toolResult;
+          entry.isError = isError;
+        }
+        send(ws, {
+          type: "tool_call_done",
+          messageId,
+          toolCallId: id,
+          result: toolResult,
+          status: isError ? ("error" as const) : ("success" as const),
+          durationMs,
+        });
+      },
+      onResult: (r: { sessionId?: string; inputTokens: number; outputTokens: number; totalCost: number }) => {
+        // Store session ID for future resume (capped map)
+        if (r.sessionId && sessionId) {
+          setClaudeCodeSession(sessionId, r.sessionId);
+        }
+      },
+    };
+
+    const ccOptions = {
+      model: claudeCodeChatModel,
+      appendSystemPrompt: appendPrompt,
+      cwd: globalProjectRoot ?? process.cwd(),
+      abortSignal: localAbortController.signal,
+      maxTurns: 50,
+      permissionMode: claudeCodeChatPermissionMode,
+      mcpConfigPath: claudeCodeChatMcpConfigPath,
+      timeoutMs: 10 * 60 * 1000, // 10 minute safety timeout
+    };
+
+    const result = ccSessionId
+      ? await resumeClaudeCodeSession(effectiveContent, ccSessionId, ccOptions, callbacks)
+      : await runClaudeCodeAgent(effectiveContent, ccOptions, callbacks);
+
+    // Update cumulative session stats (same as SDK path)
+    if (sessionId) {
+      let cumulative = chatSessionStats.get(sessionId);
+      if (!cumulative) {
+        cumulative = { totalInputTokens: 0, totalOutputTokens: 0, totalCost: 0 };
+        chatSessionStats.set(sessionId, cumulative);
+      }
+      cumulative.totalInputTokens += result.inputTokens;
+      cumulative.totalOutputTokens += result.outputTokens;
+      cumulative.totalCost += result.totalCost;
+    }
+
+    // Feed result to Context Agent for project understanding
+    if (contextAgent && result.result) {
+      try {
+        await contextAgent.ingestResult(
+          result.result,
+          toolCallLog.map((t) => ({ name: t.name, args: t.args, result: t.result })),
+          claudeCodeChatModel,
+          ws,
+          localAbortController,
+        );
+      } catch (err) {
+        console.warn("[agent:claude-code] Context Agent ingestion error:", err);
+      }
+    }
+
+    send(ws, {
+      type: "assistant_text_done",
+      messageId,
+      model: `claude-code:${claudeCodeChatModel}`,
+      tokensIn: result.inputTokens,
+      tokensOut: result.outputTokens,
+      costUsd: result.totalCost,
+      cumulativeSession: sessionId ? { ...chatSessionStats.get(sessionId)! } : undefined,
+    });
+
+    emitDebugLog(ws, "agent:claude-code", `Query complete | model=${claudeCodeChatModel} | cost=$${result.totalCost.toFixed(4)}`);
+  } catch (err) {
+    console.error("[agent:claude-code] Error:", err);
+    const errMsg = err instanceof Error ? err.message : "Unknown error";
+    const isNotInstalled = errMsg.includes("Failed to spawn claude CLI") || errMsg.includes("ENOENT");
+
+    if (isNotInstalled) {
+      send(ws, { type: "claude_code_not_installed" });
+    }
+
+    send(ws, {
+      type: "assistant_text",
+      messageId,
+      delta: isNotInstalled
+        ? "Claude Code CLI is not installed. Install it with:\n```\ncurl -fsSL https://claude.ai/install.sh | bash\n```\nThen run `claude login` to authenticate."
+        : `Error running Claude Code CLI: ${errMsg}\n\nMake sure Claude Code is installed and you're logged in: \`claude login\``,
+    });
+    send(ws, {
+      type: "assistant_text_done",
+      messageId,
+      model: "claude-code",
+      tokensIn: 0,
+      tokensOut: 0,
+      costUsd: 0,
+    });
+  } finally {
+    activeAbortController = null;
+  }
 }

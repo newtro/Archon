@@ -197,7 +197,9 @@ export type WSMessageToSidecar =
   | { type: "git_stop_watching" }
   | { type: "git_generate_commit_msg" }
   | { type: "git_show"; hash: string }
-  | { type: "set_ado_settings"; orgUrl: string; pat: string; defaultProject?: string };
+  | { type: "set_ado_settings"; orgUrl: string; pat: string; defaultProject?: string }
+  | { type: "set_chat_provider"; provider: "sdk" | "claude-code"; model?: string; permissionMode?: string; mcpConfigPath?: string }
+  | { type: "check_claude_code" };
 
 /** Context Agent transparency events */
 export type ContextAgentEvent =
@@ -334,8 +336,10 @@ export type WSMessageFromSidecar =
   | { type: "tool_call_done"; messageId: string; toolCallId: string; result: string; status: ToolCallStatus; durationMs: number }
   | { type: "debug_log"; entry: LogEntry }
   | { type: "error"; message: string }
-  | { type: "status"; status: string }
+  | { type: "status"; status: string; [key: string]: unknown }
   | { type: "pong" }
+  | { type: "claude_code_status"; installed: boolean; authenticated: boolean }
+  | { type: "claude_code_not_installed" }
   // Git responses
   | { type: "git_status_response"; data: GitStatusData }
   | { type: "git_diff_response"; data: string }
