@@ -1298,53 +1298,47 @@ You also have flow management tools available. When the user asks you to create,
 
     emitDebugLog(ws, "agent:claude-code", `Starting query | messageId=${messageId} | cwd=${globalProjectRoot ?? "(none)"} | resuming=${!!ccSessionId}`);
 
-    const runner = ccSessionId
-      ? resumeClaudeCodeSession
-      : runClaudeCodeAgent;
-
-    const runnerArgs: [string, any, any] = [
-      effectiveContent,
-      {
-        ...(ccSessionId ? {} : {}),
-        model: "sonnet",
-        systemPrompt,
-        cwd: globalProjectRoot ?? process.cwd(),
-        abortSignal: activeAbortController.signal,
-        maxTurns: 50,
-        permissionMode: "bypassPermissions" as const,
-        ...(ccSessionId ? { additionalFlags: ["--resume", ccSessionId] } : {}),
+    const callbacks = {
+      onTextDelta: (text: string) => {
+        send(ws, { type: "assistant_text", messageId, delta: text });
       },
-      {
-        onTextDelta: (text: string) => {
-          send(ws, { type: "assistant_text", messageId, delta: text });
-        },
-        onToolCallStart: (id: string, name: string, args: Record<string, unknown>) => {
-          send(ws, {
-            type: "tool_call_start",
-            messageId,
-            toolCall: { id, name, args, status: "loading" as const, startedAt: Date.now() },
-          });
-        },
-        onToolCallDone: (id: string, result: string, isError: boolean, durationMs: number) => {
-          send(ws, {
-            type: "tool_call_done",
-            messageId,
-            toolCallId: id,
-            result,
-            status: isError ? ("error" as const) : ("success" as const),
-            durationMs,
-          });
-        },
-        onResult: (result: { sessionId?: string; inputTokens: number; outputTokens: number; totalCost: number }) => {
-          // Store session ID for future resume
-          if (result.sessionId && sessionId) {
-            claudeCodeSessionMap.set(sessionId, result.sessionId);
-          }
-        },
+      onToolCallStart: (id: string, name: string, args: Record<string, unknown>) => {
+        send(ws, {
+          type: "tool_call_start",
+          messageId,
+          toolCall: { id, name, args, status: "loading" as const, startedAt: Date.now() },
+        });
       },
-    ];
+      onToolCallDone: (id: string, toolResult: string, isError: boolean, durationMs: number) => {
+        send(ws, {
+          type: "tool_call_done",
+          messageId,
+          toolCallId: id,
+          result: toolResult,
+          status: isError ? ("error" as const) : ("success" as const),
+          durationMs,
+        });
+      },
+      onResult: (r: { sessionId?: string; inputTokens: number; outputTokens: number; totalCost: number }) => {
+        // Store session ID for future resume
+        if (r.sessionId && sessionId) {
+          claudeCodeSessionMap.set(sessionId, r.sessionId);
+        }
+      },
+    };
 
-    const result = await runClaudeCodeAgent(runnerArgs[0], runnerArgs[1], runnerArgs[2]);
+    const ccOptions = {
+      model: "sonnet",
+      systemPrompt,
+      cwd: globalProjectRoot ?? process.cwd(),
+      abortSignal: activeAbortController.signal,
+      maxTurns: 50,
+      permissionMode: "bypassPermissions" as const,
+    };
+
+    const result = ccSessionId
+      ? await resumeClaudeCodeSession(effectiveContent, ccSessionId, ccOptions, callbacks)
+      : await runClaudeCodeAgent(effectiveContent, ccOptions, callbacks);
 
     send(ws, {
       type: "assistant_text_done",
@@ -1358,10 +1352,19 @@ You also have flow management tools available. When the user asks you to create,
     emitDebugLog(ws, "agent:claude-code", `Query complete | cost=$${result.totalCost.toFixed(4)}`);
   } catch (err) {
     console.error("[agent:claude-code] Error:", err);
+    const errMsg = err instanceof Error ? err.message : "Unknown error";
+    const isNotInstalled = errMsg.includes("Failed to spawn claude CLI") || errMsg.includes("ENOENT");
+
+    if (isNotInstalled) {
+      send(ws, { type: "claude_code_not_installed" });
+    }
+
     send(ws, {
       type: "assistant_text",
       messageId,
-      delta: `Error running Claude Code CLI: ${err instanceof Error ? err.message : "Unknown error"}\n\nMake sure Claude Code is installed and you're logged in: claude login`,
+      delta: isNotInstalled
+        ? "Claude Code CLI is not installed. Install it with:\n```\ncurl -fsSL https://claude.ai/install.sh | bash\n```\nThen run `claude login` to authenticate."
+        : `Error running Claude Code CLI: ${errMsg}\n\nMake sure Claude Code is installed and you're logged in: \`claude login\``,
     });
     send(ws, {
       type: "assistant_text_done",

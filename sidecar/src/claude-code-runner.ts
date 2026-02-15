@@ -52,34 +52,32 @@ export interface ClaudeCodeResult {
 
 /**
  * Check if the user is authenticated with Claude Code CLI.
- * Returns true if logged in, false otherwise.
+ * Uses `claude auth status` which is lightweight (no model call).
+ * Result is cached for 60 seconds to avoid repeated subprocess spawns.
  */
+let authCacheResult: boolean | null = null;
+let authCacheTime = 0;
+const AUTH_CACHE_TTL_MS = 60_000;
+
 export async function isClaudeCodeAuthenticated(): Promise<boolean> {
-  return new Promise((resolve) => {
-    const proc = spawn("claude", ["--version"], {
+  const now = Date.now();
+  if (authCacheResult !== null && now - authCacheTime < AUTH_CACHE_TTL_MS) {
+    return authCacheResult;
+  }
+
+  const result = await new Promise<boolean>((resolve) => {
+    // `claude auth status` exits 0 if logged in, non-zero otherwise
+    const proc = spawn("claude", ["auth", "status"], {
       stdio: ["pipe", "pipe", "pipe"],
       timeout: 5000,
     });
-    let stdout = "";
-    proc.stdout?.on("data", (d) => (stdout += d.toString()));
     proc.on("error", () => resolve(false));
-    proc.on("close", (code) => {
-      // If claude CLI exists and runs, check auth status
-      if (code === 0 && stdout.includes("claude")) {
-        // Try a simple auth check
-        const authProc = spawn("claude", ["--print", "--message", "ping", "--max-turns", "1", "--output-format", "json"], {
-          stdio: ["pipe", "pipe", "pipe"],
-          timeout: 10000,
-        });
-        authProc.on("error", () => resolve(false));
-        authProc.on("close", (authCode) => {
-          resolve(authCode === 0);
-        });
-      } else {
-        resolve(false);
-      }
-    });
+    proc.on("close", (code) => resolve(code === 0));
   });
+
+  authCacheResult = result;
+  authCacheTime = now;
+  return result;
 }
 
 /**
@@ -192,13 +190,14 @@ export async function runClaudeCodeAgent(
   args.push("--message", prompt);
 
   return new Promise<ClaudeCodeResult>((resolve, reject) => {
+    // Strip ANTHROPIC_API_KEY so the CLI uses subscription auth, not API billing
+    const cleanEnv = { ...process.env };
+    delete cleanEnv.ANTHROPIC_API_KEY;
+
     const proc: ChildProcess = spawn("claude", args, {
       cwd: options.cwd,
       stdio: ["pipe", "pipe", "pipe"],
-      env: {
-        ...process.env,
-        // Don't pass ANTHROPIC_API_KEY — we want CLI auth (subscription)
-      },
+      env: cleanEnv,
     });
 
     const parser = new StreamJsonParser();
