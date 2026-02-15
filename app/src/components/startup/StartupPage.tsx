@@ -34,7 +34,7 @@ export function StartupPage({
   return (
     <div className="startup-page">
       <div className="startup-hero">
-        <h1 className="startup-title">ArchonIDE</h1>
+        <h1 className="startup-title">Archon</h1>
         <p className="startup-subtitle">AI Agent-First IDE</p>
       </div>
 

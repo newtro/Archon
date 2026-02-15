@@ -252,7 +252,7 @@ export function ChatPanel({ messages, onSendMessage, isConnected, flows, selecte
             <div className="chat-empty-icon">
               <MessageCircle size={40} strokeWidth={1.5} />
             </div>
-            <h3 className="chat-empty-title">Welcome to ArchonIDE</h3>
+            <h3 className="chat-empty-title">Welcome to Archon</h3>
             <p className="chat-empty-text">
               Start a conversation to begin coding with AI agents.
             </p>

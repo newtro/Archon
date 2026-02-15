@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { DockviewApi } from "dockview-react";
 import { AppStateProvider, useAppState } from "./contexts/AppStateContext";
 import { DockviewContext } from "./contexts/DockviewContext";
@@ -8,6 +8,7 @@ import { TitleBar } from "./components/layout/TitleBar";
 import { DockArea } from "./components/layout/DockArea";
 import { HumanReviewModal } from "./components/flow/HumanReviewModal";
 import { PublishFlowModal } from "./components/registry/PublishFlowModal";
+import { startWindowStateTracking } from "./lib/window-persistence";
 
 function AppContent() {
   const {
@@ -19,6 +20,9 @@ function AppContent() {
 
   // DockviewApi state — lifted here so both Sidebar and DockArea share it
   const [dockApi, setDockApi] = useState<DockviewApi | null>(null);
+
+  // Persist window position/size/monitor on move and resize
+  useEffect(() => startWindowStateTracking(), []);
 
   return (
     <DockviewContext.Provider value={dockApi}>

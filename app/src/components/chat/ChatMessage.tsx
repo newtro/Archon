@@ -81,7 +81,7 @@ export function ChatMessage({ message }: ChatMessageProps) {
     <div className={`message message-${message.role}`} data-message-id={message.id}>
       <div className="message-header">
         <span className="message-role">
-          {message.role === "user" ? "You" : "ArchonIDE"}
+          {message.role === "user" ? "You" : "Archon"}
         </span>
         {message.model && (
           <span className="message-model">{message.model}</span>

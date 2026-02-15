@@ -111,7 +111,7 @@ export class McpManager extends EventEmitter {
       await this.sendRequest(config.name, "initialize", {
         protocolVersion: "2024-11-05",
         capabilities: {},
-        clientInfo: { name: "archon-ide", version: "0.1.0" },
+        clientInfo: { name: "archon", version: "0.1.0" },
       });
       server.initialized = true;
 

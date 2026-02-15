@@ -52,7 +52,7 @@ export async function runOpenRouterAgent(
     apiKey: options.apiKey,
     defaultHeaders: {
       "HTTP-Referer": "https://archonide.dev",
-      "X-Title": "ArchonIDE",
+      "X-Title": "Archon",
     },
   });
 

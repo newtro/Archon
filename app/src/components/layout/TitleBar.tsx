@@ -13,7 +13,7 @@ export function TitleBar() {
     <div className="title-bar" data-tauri-drag-region>
       <div className="title-bar-label" data-tauri-drag-region>
         <img src="/logo.png" alt="" className="title-bar-icon" />
-        ArchonIDE
+        Archon
       </div>
       <div className="title-bar-controls">
         <button

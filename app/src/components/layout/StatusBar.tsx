@@ -92,7 +92,7 @@ export function StatusBar({ isConnected, connectionStatus, messages, activeModel
             <span>${totalCost.toFixed(4)}</span>
           </span>
         )}
-        <span className="status-item">ArchonIDE v0.1.0</span>
+        <span className="status-item">Archon v0.1.0</span>
       </div>
     </footer>
   );
