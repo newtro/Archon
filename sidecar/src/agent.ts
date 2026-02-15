@@ -1318,6 +1318,14 @@ You also have flow management tools available. When the user asks you to create,
       effectiveContent = `<conversation_history>\n${historyPrefix}\n</conversation_history>\n\n${content}`;
     }
 
+    // Get or create Context Agent for this session (mirrors SDK path)
+    const contextAgent = sessionId
+      ? contextManager.getOrCreate(sessionId)
+      : undefined;
+
+    // Track tool calls for Context Agent ingestion
+    const toolCallLog: Array<{ id: string; name: string; args: Record<string, unknown>; result?: string; isError?: boolean }> = [];
+
     emitDebugLog(ws, "agent:claude-code", `Starting query | messageId=${messageId} | cwd=${globalProjectRoot ?? "(none)"} | resuming=${!!ccSessionId}`);
 
     const callbacks = {
@@ -1325,6 +1333,7 @@ You also have flow management tools available. When the user asks you to create,
         send(ws, { type: "assistant_text", messageId, delta: text });
       },
       onToolCallStart: (id: string, name: string, args: Record<string, unknown>) => {
+        toolCallLog.push({ id, name, args });
         send(ws, {
           type: "tool_call_start",
           messageId,
@@ -1332,6 +1341,12 @@ You also have flow management tools available. When the user asks you to create,
         });
       },
       onToolCallDone: (id: string, toolResult: string, isError: boolean, durationMs: number) => {
+        // Update tool call log with result
+        const entry = toolCallLog.find((t) => t.id === id);
+        if (entry) {
+          entry.result = toolResult;
+          entry.isError = isError;
+        }
         send(ws, {
           type: "tool_call_done",
           messageId,
@@ -1373,6 +1388,21 @@ You also have flow management tools available. When the user asks you to create,
       cumulative.totalInputTokens += result.inputTokens;
       cumulative.totalOutputTokens += result.outputTokens;
       cumulative.totalCost += result.totalCost;
+    }
+
+    // Feed result to Context Agent for project understanding
+    if (contextAgent && result.result) {
+      try {
+        await contextAgent.ingestResult(
+          result.result,
+          toolCallLog.map((t) => ({ name: t.name, args: t.args, result: t.result })),
+          claudeCodeChatModel,
+          ws,
+          activeAbortController!,
+        );
+      } catch (err) {
+        console.warn("[agent:claude-code] Context Agent ingestion error:", err);
+      }
     }
 
     send(ws, {
