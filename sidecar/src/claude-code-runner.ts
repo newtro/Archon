@@ -75,9 +75,13 @@ export async function isClaudeCodeAuthenticated(): Promise<boolean> {
   }
 
   const result = await new Promise<boolean>((resolve) => {
+    const cleanEnv = { ...process.env };
+    delete cleanEnv.CLAUDECODE;
     const proc = spawn("claude", ["auth", "status"], {
-      stdio: ["pipe", "pipe", "pipe"],
+      stdio: ["ignore", "pipe", "pipe"],
       timeout: 5000,
+      env: cleanEnv,
+      shell: true,
     });
     proc.on("error", () => resolve(false));
     proc.on("close", (code) => resolve(code === 0));
@@ -93,9 +97,13 @@ export async function isClaudeCodeAuthenticated(): Promise<boolean> {
  */
 export async function isClaudeCodeInstalled(): Promise<boolean> {
   return new Promise((resolve) => {
+    const cleanEnv = { ...process.env };
+    delete cleanEnv.CLAUDECODE;
     const proc = spawn("claude", ["--version"], {
-      stdio: ["pipe", "pipe", "pipe"],
+      stdio: ["ignore", "pipe", "pipe"],
       timeout: 5000,
+      env: cleanEnv,
+      shell: true,
     });
     proc.on("error", () => resolve(false));
     proc.on("close", (code) => resolve(code === 0));
@@ -155,15 +163,14 @@ export async function runClaudeCodeAgent(
   callbacks: ClaudeCodeStreamCallbacks,
 ): Promise<ClaudeCodeResult> {
   // Build CLI arguments
+  // --verbose is required when using --output-format stream-json with --print
+  // --include-partial-messages enables real-time streaming of text deltas
   const args: string[] = [
     "--print",
     "--output-format", "stream-json",
+    "--verbose",
+    "--include-partial-messages",
   ];
-
-  // Only enable verbose when explicitly requested
-  if (options.verbose) {
-    args.push("--verbose");
-  }
 
   // Model
   if (options.model) {
@@ -175,19 +182,23 @@ export async function runClaudeCodeAgent(
     args.push("--max-turns", String(options.maxTurns));
   }
 
-  // Permission mode
+  // Permission mode — use the --permission-mode flag (preferred in current CLI)
   const permMode = options.permissionMode ?? "bypassPermissions";
   if (permMode === "bypassPermissions") {
-    args.push("--dangerously-skip-permissions");
+    args.push("--permission-mode", "bypassPermissions");
   } else if (permMode === "acceptEdits") {
-    args.push("--allowedTools", "Edit,Write,MultiEdit");
+    args.push("--permission-mode", "acceptEdits");
+  } else if (permMode === "default") {
+    args.push("--permission-mode", "default");
   }
 
-  // System prompt: prefer append (keeps Claude Code's built-in context) over replace
+  // System prompt: prefer append (keeps Claude Code's built-in context) over replace.
+  // On Windows with shell: true, newlines in arguments break cmd.exe's command parsing.
+  // Replace literal newlines with spaces to keep it as a single command-line token.
   if (options.appendSystemPrompt) {
-    args.push("--append-system-prompt", options.appendSystemPrompt);
+    args.push("--append-system-prompt", options.appendSystemPrompt.replace(/\n/g, " "));
   } else if (options.systemPrompt) {
-    args.push("--system-prompt", options.systemPrompt);
+    args.push("--system-prompt", options.systemPrompt.replace(/\n/g, " "));
   }
 
   // MCP config
@@ -205,19 +216,35 @@ export async function runClaudeCodeAgent(
     args.push(...options.additionalFlags);
   }
 
-  // The prompt itself
-  args.push("--message", prompt);
+  // The prompt is sent via stdin (not as a positional arg) to avoid Windows cmd.exe
+  // shell escaping issues — cmd.exe breaks on newlines and special chars in arguments.
+  // --print reads from stdin in text format by default when no positional arg is given.
+
+  console.log(`[claude-code-runner] Spawning: claude ${args.join(" ")}`);
+  console.log(`[claude-code-runner] cwd: ${options.cwd}`);
+  console.log(`[claude-code-runner] Prompt (${prompt.length} chars): ${prompt.slice(0, 200)}`);
 
   return new Promise<ClaudeCodeResult>((resolve, reject) => {
     // Strip ANTHROPIC_API_KEY so the CLI uses subscription auth, not API billing
+    // Strip CLAUDECODE to avoid nested-session detection when sidecar runs under Claude Code
     const cleanEnv = { ...process.env };
     delete cleanEnv.ANTHROPIC_API_KEY;
+    delete cleanEnv.CLAUDECODE;
 
     const proc: ChildProcess = spawn("claude", args, {
       cwd: options.cwd,
+      // stdin is "pipe" — we write the user prompt to it and close immediately.
       stdio: ["pipe", "pipe", "pipe"],
       env: cleanEnv,
+      shell: true, // Required on Windows to resolve .cmd/.bat shims (e.g. npm-installed CLIs)
     });
+
+    // Send the user prompt via stdin to avoid shell escaping issues on Windows.
+    // Close stdin immediately so the CLI doesn't hang waiting for more input.
+    if (proc.stdin) {
+      proc.stdin.write(prompt);
+      proc.stdin.end();
+    }
 
     const parser = new StreamJsonParser();
     let fullResult = "";
@@ -227,6 +254,9 @@ export async function runClaudeCodeAgent(
     let sessionId: string | undefined;
     let stderr = "";
     let settled = false;
+    // Track whether we've been emitting via stream_event deltas,
+    // so we skip the final "assistant" event's text (which duplicates)
+    let streamedViaDeltas = false;
 
     // Track tool call timings
     const toolStartTimes = new Map<string, number>();
@@ -270,18 +300,69 @@ export async function runClaudeCodeAgent(
     }
 
     // Parse streaming events
+    // With --include-partial-messages, the CLI emits:
+    //   system (init) → stream_event (message_start, content_block_start,
+    //   content_block_delta×N, content_block_stop, message_delta, message_stop)
+    //   → assistant (full message, duplicates delta text) → result (usage/cost)
+    // Tool use flows: stream_event content_block_start with type "tool_use",
+    //   then input_json_delta events, then the "user" event with tool results.
     parser.on("event", (event: Record<string, unknown>) => {
       const type = event.type as string;
 
       switch (type) {
+        case "stream_event": {
+          // Real-time streaming events from the Anthropic API
+          const inner = event.event as Record<string, unknown>;
+          if (!inner) break;
+          const eventType = inner.type as string;
+
+          switch (eventType) {
+            case "content_block_delta": {
+              const delta = inner.delta as Record<string, unknown>;
+              if (!delta) break;
+              if (delta.type === "text_delta") {
+                const text = delta.text as string;
+                if (text) {
+                  fullResult += text;
+                  streamedViaDeltas = true;
+                  callbacks.onTextDelta(text);
+                }
+              }
+              // input_json_delta is for tool call arguments — we handle
+              // tool_use from the full "assistant" message instead
+              break;
+            }
+            case "content_block_start": {
+              // Tool use blocks start here with partial info
+              const block = inner.content_block as Record<string, unknown>;
+              if (block?.type === "tool_use") {
+                const toolId = block.id as string;
+                toolStartTimes.set(toolId, Date.now());
+                // Args arrive incrementally via input_json_delta — we'll
+                // emit onToolCallStart from the full "assistant" message
+                // which has complete args. Store the start time now.
+              }
+              break;
+            }
+            // message_start, content_block_stop, message_delta, message_stop
+            // are lifecycle events — no action needed
+            default:
+              break;
+          }
+          break;
+        }
+
         case "assistant": {
-          // Assistant message with content blocks
+          // Full assistant message — arrives after all stream_event deltas.
+          // If we already streamed text via deltas, skip re-emitting text.
+          // But we still need this for tool_use blocks (complete args).
           const message = event.message as Record<string, unknown>;
           const content = message?.content;
           if (Array.isArray(content)) {
             for (const block of content) {
               const b = block as Record<string, unknown>;
-              if (b.type === "text") {
+              if (b.type === "text" && !streamedViaDeltas) {
+                // Fallback: if deltas weren't emitted, use the full text
                 const text = b.text as string;
                 fullResult += text;
                 callbacks.onTextDelta(text);
@@ -289,11 +370,16 @@ export async function runClaudeCodeAgent(
                 const toolId = b.id as string;
                 const toolName = b.name as string;
                 const toolArgs = (b.input as Record<string, unknown>) ?? {};
-                toolStartTimes.set(toolId, Date.now());
+                // Set start time if not already set by stream_event
+                if (!toolStartTimes.has(toolId)) {
+                  toolStartTimes.set(toolId, Date.now());
+                }
                 callbacks.onToolCallStart(toolId, toolName, toolArgs);
               }
             }
           }
+          // Reset for next turn (multi-turn agentic loops)
+          streamedViaDeltas = false;
           break;
         }
 
@@ -354,10 +440,8 @@ export async function runClaudeCodeAgent(
         }
 
         default: {
-          // Only log unknown types in verbose mode to reduce noise
-          if (options.verbose) {
-            console.log(`[claude-code-runner] Event: ${type}`);
-          }
+          // Log unknown types to help debug future format changes
+          console.log(`[claude-code-runner] Unhandled event type: ${type}`, JSON.stringify(event).slice(0, 200));
           break;
         }
       }
@@ -368,7 +452,10 @@ export async function runClaudeCodeAgent(
     });
 
     proc.stderr?.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString();
+      const text = chunk.toString();
+      stderr += text;
+      // Log stderr in real-time to help debug CLI issues
+      console.error(`[claude-code-runner:stderr] ${text.trimEnd()}`);
     });
 
     proc.on("error", (err) => {
@@ -379,6 +466,7 @@ export async function runClaudeCodeAgent(
     });
 
     proc.on("close", (code) => {
+      console.log(`[claude-code-runner] Process exited with code ${code}`);
       if (timeoutTimer) clearTimeout(timeoutTimer);
       parser.flush();
 

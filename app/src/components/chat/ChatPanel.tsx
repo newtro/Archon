@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
-import { MessageCircle, Layers, SquarePen, History, Trash2, ClipboardCopy, Check } from "lucide-react";
+import { MessageCircle, Layers, SquarePen, History, Trash2, ClipboardCopy, Check, ChevronDown } from "lucide-react";
 import { ChatMessage as ChatMessageComponent } from "./ChatMessage";
 import { ChatInput } from "./ChatInput";
 import { ChatContextMenu } from "./ChatContextMenu";
@@ -24,7 +24,17 @@ interface ChatPanelProps {
   isStreaming?: boolean;
   /** Cancel the current AI operation */
   onCancel?: () => void;
+  /** Currently selected model id (e.g. "sonnet", "opus", "haiku") */
+  activeModel?: string;
+  /** Called when the user selects a different model */
+  onModelChange?: (model: string) => void;
 }
+
+const MODEL_OPTIONS = [
+  { id: "haiku", label: "Haiku 4.5" },
+  { id: "sonnet", label: "Sonnet 4.5" },
+  { id: "opus", label: "Opus 4.6" },
+];
 
 const DENSITY_LABELS: Record<DensityMode, string> = {
   minimal: "Minimal",
@@ -44,7 +54,7 @@ function timeAgo(ts: number): string {
   return new Date(ts).toLocaleDateString();
 }
 
-export function ChatPanel({ messages, onSendMessage, isConnected, flows, selectedFlowId, onFlowSelect, isFlowRunning, onNewChat, sessionId, onLoadSession, onDeleteSession, isStreaming, onCancel }: ChatPanelProps) {
+export function ChatPanel({ messages, onSendMessage, isConnected, flows, selectedFlowId, onFlowSelect, isFlowRunning, onNewChat, sessionId, onLoadSession, onDeleteSession, isStreaming, onCancel, activeModel, onModelChange }: ChatPanelProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
@@ -57,6 +67,10 @@ export function ChatPanel({ messages, onSendMessage, isConnected, flows, selecte
   const [historyOpen, setHistoryOpen] = useState(false);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const historyRef = useRef<HTMLDivElement>(null);
+
+  // Model selector dropdown state
+  const [modelOpen, setModelOpen] = useState(false);
+  const modelRef = useRef<HTMLDivElement>(null);
 
   // Load sessions when dropdown opens
   useEffect(() => {
@@ -76,6 +90,18 @@ export function ChatPanel({ messages, onSendMessage, isConnected, flows, selecte
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [historyOpen]);
+
+  // Close model dropdown on outside click
+  useEffect(() => {
+    if (!modelOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (modelRef.current && !modelRef.current.contains(e.target as Node)) {
+        setModelOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [modelOpen]);
 
   const [copied, setCopied] = useState(false);
 
@@ -167,7 +193,32 @@ export function ChatPanel({ messages, onSendMessage, isConnected, flows, selecte
     <div className="chat-panel">
       <div className="chat-header">
         <h2 className="chat-title">Chat</h2>
-        <span className="chat-model-badge">Claude Sonnet 4.5</span>
+        <div className="chat-model-wrapper" ref={modelRef}>
+          <button
+            className={`chat-model-badge ${modelOpen ? "active" : ""}`}
+            onClick={() => setModelOpen(!modelOpen)}
+            title="Select model"
+          >
+            {MODEL_OPTIONS.find((m) => m.id === activeModel)?.label ?? "Sonnet 4.5"}
+            <ChevronDown size={12} />
+          </button>
+          {modelOpen && (
+            <div className="chat-model-dropdown">
+              {MODEL_OPTIONS.map((m) => (
+                <button
+                  key={m.id}
+                  className={`chat-model-option ${activeModel === m.id ? "active" : ""}`}
+                  onClick={() => {
+                    onModelChange?.(m.id);
+                    setModelOpen(false);
+                  }}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
         <span className="chat-spacer" />
         {deduped.length > 0 && (
           <button

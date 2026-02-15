@@ -23,6 +23,7 @@ export const ChatPanelWrapper: React.FC<IDockviewPanelProps> = () => {
     messages, handleSendMessage, isConnected, flows, selectedFlowId,
     setSelectedFlowId, isFlowRunning, isStreaming, handleCancel,
     handleNewChat, sessionId, handleLoadSession, handleDeleteSession,
+    activeModel, handleModelChange,
   } = useAppState();
 
   return (
@@ -40,6 +41,8 @@ export const ChatPanelWrapper: React.FC<IDockviewPanelProps> = () => {
       sessionId={sessionId}
       onLoadSession={handleLoadSession}
       onDeleteSession={handleDeleteSession}
+      activeModel={activeModel}
+      onModelChange={handleModelChange}
     />
   );
 };

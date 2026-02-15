@@ -445,6 +445,10 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (lastProjectRootRef.current) {
         directSend({ type: "set_project_root", path: lastProjectRootRef.current });
       }
+      // Restore saved model for sidecar
+      getSetting<string>("model", "sonnet").then((model) => {
+        directSend({ type: "set_model", model });
+      });
       // Check Claude Code CLI availability and restore saved provider
       directSend({ type: "check_claude_code" });
       getSetting<string>("chatProvider", "sdk").then((provider) => {
@@ -551,9 +555,11 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     send({ type: "set_openrouter_key", key });
   }, [send]);
 
-  const handleModelChange = useCallback((model: string) => {
+  const handleModelChange = useCallback(async (model: string) => {
     setActiveModel(model);
-  }, []);
+    await setSetting("model", model);
+    send({ type: "set_model", model });
+  }, [send]);
 
   const handleAdoSettingsChange = useCallback((orgUrl: string, pat: string, defaultProject?: string) => {
     send({ type: "set_ado_settings", orgUrl, pat, defaultProject });

@@ -188,6 +188,16 @@ interface ReviewResolution {
 
 const pendingReviews = new Map<string, { resolve: (resolution: ReviewResolution) => void }>();
 
+// ── Subscription auth env (per execution) ───────────────────
+// When running in claude-code mode (Max subscription) without an API key,
+// we store a clean env (without ANTHROPIC_API_KEY) keyed by executionId.
+// Each SDK query() call checks this map and passes the env to force subscription auth.
+const subscriptionEnvMap = new Map<string, Record<string, string>>();
+
+function getSubscriptionEnv(executionId: string): Record<string, string> | undefined {
+  return subscriptionEnvMap.get(executionId);
+}
+
 /**
  * Resolve a pending human review by node ID.
  * Called from agent.ts when the frontend sends a `resolve_review` message.
@@ -242,10 +252,11 @@ export async function executeFlow(
   ws: WebSocket,
   flow: FlowDefinition,
   userInput: string,
-  apiKey: string,
+  apiKey: string | null,
   history?: HistoryMessage[],
   _sessionId?: string,
   contextAgent?: ContextAgent,
+  chatProvider?: "sdk" | "claude-code",
 ): Promise<void> {
   const executionId = crypto.randomUUID();
   const abortController = new AbortController();
@@ -254,6 +265,18 @@ export async function executeFlow(
 
   // Reset the Anthropic client when API key may have changed
   resetTokenCounterClient();
+
+  // When in claude-code mode without an API key, build a clean env for subscription auth.
+  // Each SDK query() call in node executors will pick this up via getSubscriptionEnv().
+  if (chatProvider === "claude-code" && !apiKey) {
+    const cleanEnv: Record<string, string> = {};
+    for (const [key, value] of Object.entries(process.env)) {
+      if (key !== "ANTHROPIC_API_KEY" && key !== "CLAUDECODE" && value !== undefined) {
+        cleanEnv[key] = value;
+      }
+    }
+    subscriptionEnvMap.set(executionId, cleanEnv);
+  }
 
   const state: FlowState = {
     task: userInput,
@@ -270,7 +293,9 @@ export async function executeFlow(
   emitEvent(ws, { type: "flow_started", executionId, flowId: flow.id });
 
   try {
-    process.env.ANTHROPIC_API_KEY = apiKey;
+    if (apiKey) {
+      process.env.ANTHROPIC_API_KEY = apiKey;
+    }
 
     const startNode = findStartNode(flow);
     if (!startNode) {
@@ -299,6 +324,7 @@ export async function executeFlow(
   } finally {
     activeExecutions.delete(executionId);
     executionStats.delete(executionId);
+    subscriptionEnvMap.delete(executionId);
     // Clean up raw message cache entries for this execution
     for (const key of rawMessageCache.keys()) {
       if (key.startsWith(`${executionId}:`)) rawMessageCache.delete(key);
@@ -533,8 +559,9 @@ Use your tools (Read, Glob, Grep, etc.) to explore and understand this project. 
     }
   }
 
-  // ── Claude Agent SDK path (unchanged) ──────────────────────────
+  // ── Claude Agent SDK path ───────────────────────────────────────
   const hasProjectRoot = !!getGlobalProjectRoot();
+  const subEnv = getSubscriptionEnv(executionId);
   const options: Options = {
     model: model as "haiku" | "sonnet" | "opus",
     cwd: resolveNodeCwd(cfg),
@@ -548,6 +575,8 @@ Use your tools (Read, Glob, Grep, etc.) to explore and understand this project. 
     allowDangerouslySkipPermissions: true,
     includePartialMessages: true,
     abortController,
+    // Subscription auth: pass clean env without ANTHROPIC_API_KEY to force Max subscription
+    ...(subEnv ? { env: subEnv } : {}),
   };
 
   let result = "";
@@ -1167,7 +1196,7 @@ async function executeIntentNode(
   node: SerializedNode,
   cfg: Record<string, unknown>,
   input: string,
-  _executionId: string,
+  executionId: string,
   abortController: AbortController,
 ): Promise<NodeOutput> {
   // Support both old string[] and new { name, instructions }[] formats
@@ -1190,12 +1219,14 @@ User message: "${input}"
 
 Respond with ONLY the category name, nothing else.`;
 
+  const subEnvIntent = getSubscriptionEnv(executionId);
   const options: Options = {
     model: "haiku",
     permissionMode: "bypassPermissions",
     allowDangerouslySkipPermissions: true,
     allowedTools: [],
     abortController,
+    ...(subEnvIntent ? { env: subEnvIntent } : {}),
   };
 
   let result = "";
@@ -1225,7 +1256,7 @@ async function executeEvaluatorNode(
   node: SerializedNode,
   cfg: Record<string, unknown>,
   input: string,
-  _executionId: string,
+  executionId: string,
   abortController: AbortController,
 ): Promise<NodeOutput> {
   const criteria = (cfg.criteria as string) ?? "Evaluate quality.";
@@ -1243,12 +1274,14 @@ Respond with a JSON object containing:
 
 Respond ONLY with the JSON.`;
 
+  const subEnvEval = getSubscriptionEnv(executionId);
   const options: Options = {
     model: "haiku",
     permissionMode: "bypassPermissions",
     allowDangerouslySkipPermissions: true,
     allowedTools: [],
     abortController,
+    ...(subEnvEval ? { env: subEnvEval } : {}),
   };
 
   let result = "";
@@ -1286,7 +1319,7 @@ async function executeToolNode(
   node: SerializedNode,
   cfg: Record<string, unknown>,
   input: string,
-  _executionId: string,
+  executionId: string,
   abortController: AbortController,
 ): Promise<NodeOutput> {
   const toolName = (cfg.toolName as string) ?? "";
@@ -1309,12 +1342,14 @@ ${input}
 
 Run the tool and return the result.`;
 
+  const subEnvTool = getSubscriptionEnv(executionId);
   const options: Options = {
     model: "haiku",
     permissionMode: "bypassPermissions",
     allowDangerouslySkipPermissions: true,
     allowedTools: [toolName],
     abortController,
+    ...(subEnvTool ? { env: subEnvTool } : {}),
   };
 
   let result = "";
@@ -1358,7 +1393,7 @@ async function executeRouterNode(
   cfg: Record<string, unknown>,
   input: string,
   state: FlowState,
-  _executionId: string,
+  executionId: string,
   abortController: AbortController,
 ): Promise<NodeOutput> {
   const mode = (cfg.mode as string) ?? "rules";
@@ -1405,12 +1440,14 @@ Input: "${input}"
 
 Respond with ONLY the route name, nothing else.`;
 
+  const subEnvRouter = getSubscriptionEnv(executionId);
   const options: Options = {
     model: "haiku",
     permissionMode: "bypassPermissions",
     allowDangerouslySkipPermissions: true,
     allowedTools: [],
     abortController,
+    ...(subEnvRouter ? { env: subEnvRouter } : {}),
   };
 
   let result = "";
@@ -1565,7 +1602,7 @@ async function executeHandoffNode(
   cfg: Record<string, unknown>,
   input: string,
   state: FlowState,
-  _executionId: string,
+  executionId: string,
   abortController: AbortController,
 ): Promise<NodeOutput> {
   const briefingPrompt = (cfg.briefingPrompt as string) ?? "Summarize the current state.";
@@ -1593,12 +1630,14 @@ ${input}
 
 Generate a focused briefing for the next agent.`;
 
+  const subEnvHandoff = getSubscriptionEnv(executionId);
   const options: Options = {
     model: "haiku",
     permissionMode: "bypassPermissions",
     allowDangerouslySkipPermissions: true,
     allowedTools: [],
     abortController,
+    ...(subEnvHandoff ? { env: subEnvHandoff } : {}),
   };
 
   let result = "";

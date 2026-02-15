@@ -78,6 +78,14 @@ export function SettingsPanel({ onApiKeyChange, onOpenRouterKeyChange, onModelCh
     setTimeout(() => setSaveStatus("idle"), 2000);
   };
 
+  const handleClearApiKey = async () => {
+    await setSetting("apiKey", "");
+    setApiKey("");
+    onApiKeyChange("");
+    setIsMasked(true);
+    setSaveStatus("idle");
+  };
+
   const handleSaveOpenRouterKey = async () => {
     setOrSaveStatus("saving");
     await setSetting("openrouterApiKey", openrouterKey);
@@ -86,9 +94,16 @@ export function SettingsPanel({ onApiKeyChange, onOpenRouterKeyChange, onModelCh
     setTimeout(() => setOrSaveStatus("idle"), 2000);
   };
 
-  const handleModelChange = async (newModel: string) => {
+  const handleClearOpenRouterKey = async () => {
+    await setSetting("openrouterApiKey", "");
+    setOpenrouterKey("");
+    onOpenRouterKeyChange("");
+    setOrMasked(true);
+    setOrSaveStatus("idle");
+  };
+
+  const handleModelChange = (newModel: string) => {
     setModel(newModel);
-    await setSetting("model", newModel);
     onModelChange?.(newModel);
   };
 
@@ -183,6 +198,14 @@ export function SettingsPanel({ onApiKeyChange, onOpenRouterKeyChange, onModelCh
                   ? "Saved"
                   : "Save Key"}
             </button>
+            {apiKey && (
+              <button
+                className="settings-btn-danger"
+                onClick={handleClearApiKey}
+              >
+                Clear
+              </button>
+            )}
           </div>
         </section>
 
@@ -237,6 +260,14 @@ export function SettingsPanel({ onApiKeyChange, onOpenRouterKeyChange, onModelCh
                   ? "Saved"
                   : "Save Key"}
             </button>
+            {openrouterKey && (
+              <button
+                className="settings-btn-danger"
+                onClick={handleClearOpenRouterKey}
+              >
+                Clear
+              </button>
+            )}
           </div>
         </section>
 

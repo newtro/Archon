@@ -198,6 +198,7 @@ export type WSMessageToSidecar =
   | { type: "git_generate_commit_msg" }
   | { type: "git_show"; hash: string }
   | { type: "set_ado_settings"; orgUrl: string; pat: string; defaultProject?: string }
+  | { type: "set_model"; model: string }
   | { type: "set_chat_provider"; provider: "sdk" | "claude-code"; model?: string; permissionMode?: string; mcpConfigPath?: string }
   | { type: "check_claude_code" };
 
