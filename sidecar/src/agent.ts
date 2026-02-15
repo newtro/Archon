@@ -8,6 +8,7 @@ import { countTokenBreakdown, resetTokenCounterClient } from "./token-counter.js
 import { flowToolsServer, setFlowToolsWs, handleFlowToolResponse } from "./flow-tools.js";
 import * as gitManager from "./git-manager.js";
 import { setAdoSettings } from "./ado-client.js";
+import { runClaudeCodeAgent, resumeClaudeCodeSession, isClaudeCodeInstalled, isClaudeCodeAuthenticated } from "./claude-code-runner.js";
 
 // Initialize MCP manager (server configs will be provided by the frontend)
 console.log(`[agent] MCP manager ready (${mcpManager.listServers().length} servers)`);
@@ -15,6 +16,12 @@ console.log(`[agent] MCP manager ready (${mcpManager.listServers().length} serve
 // In-memory API key storage (will be replaced with secure storage)
 let apiKey: string | null = null;
 let openrouterApiKey: string | null = null;
+
+// Chat provider mode: "sdk" (Agent SDK, API key) or "claude-code" (CLI, subscription)
+let chatProvider: "sdk" | "claude-code" = "sdk";
+
+// Claude Code session map for multi-turn conversations
+const claudeCodeSessionMap = new Map<string, string>();
 
 export function getOpenRouterApiKey(): string | null {
   return openrouterApiKey;
@@ -112,6 +119,15 @@ interface SetAdoSettingsMessage {
   defaultProject?: string;
 }
 
+interface SetChatProviderMessage {
+  type: "set_chat_provider";
+  provider: "sdk" | "claude-code";
+}
+
+interface CheckClaudeCodeMessage {
+  type: "check_claude_code";
+}
+
 // Git message types
 interface GitStatusMessage { type: "git_status" }
 interface GitDiffMessage { type: "git_diff"; file?: string; staged?: boolean }
@@ -157,6 +173,8 @@ type IncomingMessage =
   | GetContextRawMessage
   | FlowToolResponseMessage
   | SetAdoSettingsMessage
+  | SetChatProviderMessage
+  | CheckClaudeCodeMessage
   | GitMessage;
 
 function send(ws: WebSocket, data: unknown): void {
@@ -224,7 +242,11 @@ export async function handleMessage(
       break;
 
     case "user_message":
-      await handleUserMessage(ws, message.content, message.images, message.history, message.sessionId);
+      if (chatProvider === "claude-code") {
+        await handleUserMessageClaudeCode(ws, message.content, message.history, message.sessionId);
+      } else {
+        await handleUserMessage(ws, message.content, message.images, message.history, message.sessionId);
+      }
       break;
 
     case "execute_flow":
@@ -274,6 +296,22 @@ export async function handleMessage(
       send(ws, { type: "status", status: "ado_settings_set" });
       console.log("[agent] Azure DevOps settings configured");
       break;
+
+    case "set_chat_provider":
+      chatProvider = (message as SetChatProviderMessage).provider;
+      send(ws, { type: "status", status: "chat_provider_set", provider: chatProvider });
+      console.log(`[agent] Chat provider set to: ${chatProvider}`);
+      break;
+
+    case "check_claude_code": {
+      const [installed, authenticated] = await Promise.all([
+        isClaudeCodeInstalled(),
+        isClaudeCodeAuthenticated(),
+      ]);
+      send(ws, { type: "claude_code_status", installed, authenticated });
+      console.log(`[agent] Claude Code check: installed=${installed}, authenticated=${authenticated}`);
+      break;
+    }
 
     // ── Git operations ────────────────────────────────────────────
     case "git_status":
@@ -1199,4 +1237,141 @@ async function emitChatContextEvents(
     delta,
     cumulativeSession: { ...cumulative },
   });
+}
+
+/**
+ * Handle a user message using the Claude Code CLI (subscription-based).
+ * Mirrors handleUserMessage but uses the CLI runner instead of the Agent SDK.
+ */
+async function handleUserMessageClaudeCode(
+  ws: WebSocket,
+  content: string,
+  history?: HistoryMessage[],
+  sessionId?: string,
+): Promise<void> {
+  const messageId = crypto.randomUUID();
+
+  try {
+    activeAbortController = new AbortController();
+
+    // Check if we have a prior Claude Code session to resume
+    const ccSessionId = sessionId ? claudeCodeSessionMap.get(sessionId) : undefined;
+
+    // Build system prompt (same logic as SDK path)
+    let systemPrompt: string | undefined;
+    if (globalProjectRoot) {
+      let gitContext = "";
+      try {
+        const gitStatus = await gitManager.getStatus();
+        if (gitStatus.isRepo) {
+          const totalChanges = gitStatus.staged.length + gitStatus.unstaged.length + gitStatus.untracked.length;
+          const recentLog = await gitManager.getLog(0, 5);
+          const recentCommits = recentLog.entries
+            .map((e) => `  ${e.hashShort} ${e.message}`)
+            .join("\n");
+          gitContext = `\n\nGit status:
+- Branch: ${gitStatus.branch}${gitStatus.tracking ? ` (tracking ${gitStatus.tracking})` : ""}
+- Ahead: ${gitStatus.ahead}, Behind: ${gitStatus.behind}
+- Changes: ${totalChanges} total${gitContext}
+- Recent commits:\n${recentCommits || "  (none)"}`;
+        }
+      } catch { /* best-effort */ }
+
+      systemPrompt = `You are an AI coding assistant embedded in an IDE. The user has opened the project located at: ${globalProjectRoot}
+
+When the user says "this app", "the project", "this codebase", or similar, they are referring to THEIR project at that path — not the IDE application itself.
+
+Focus exclusively on the user's project. Use your tools to explore and understand it before answering questions about it.
+
+You also have flow management tools available. When the user asks you to create, modify, delete, list, or describe a flow, workflow, or pipeline, use the flow management tools.${gitContext}`;
+    }
+
+    // Prepend history if not resuming
+    let effectiveContent = content;
+    if (!ccSessionId && history && history.length > 0) {
+      const historyPrefix = history.map((m) => {
+        const role = m.role === "user" ? "User" : "Assistant";
+        return `${role}: ${m.content}`;
+      }).join("\n\n");
+      effectiveContent = `<conversation_history>\n${historyPrefix}\n</conversation_history>\n\n${content}`;
+    }
+
+    emitDebugLog(ws, "agent:claude-code", `Starting query | messageId=${messageId} | cwd=${globalProjectRoot ?? "(none)"} | resuming=${!!ccSessionId}`);
+
+    const runner = ccSessionId
+      ? resumeClaudeCodeSession
+      : runClaudeCodeAgent;
+
+    const runnerArgs: [string, any, any] = [
+      effectiveContent,
+      {
+        ...(ccSessionId ? {} : {}),
+        model: "sonnet",
+        systemPrompt,
+        cwd: globalProjectRoot ?? process.cwd(),
+        abortSignal: activeAbortController.signal,
+        maxTurns: 50,
+        permissionMode: "bypassPermissions" as const,
+        ...(ccSessionId ? { additionalFlags: ["--resume", ccSessionId] } : {}),
+      },
+      {
+        onTextDelta: (text: string) => {
+          send(ws, { type: "assistant_text", messageId, delta: text });
+        },
+        onToolCallStart: (id: string, name: string, args: Record<string, unknown>) => {
+          send(ws, {
+            type: "tool_call_start",
+            messageId,
+            toolCall: { id, name, args, status: "loading" as const, startedAt: Date.now() },
+          });
+        },
+        onToolCallDone: (id: string, result: string, isError: boolean, durationMs: number) => {
+          send(ws, {
+            type: "tool_call_done",
+            messageId,
+            toolCallId: id,
+            result,
+            status: isError ? ("error" as const) : ("success" as const),
+            durationMs,
+          });
+        },
+        onResult: (result: { sessionId?: string; inputTokens: number; outputTokens: number; totalCost: number }) => {
+          // Store session ID for future resume
+          if (result.sessionId && sessionId) {
+            claudeCodeSessionMap.set(sessionId, result.sessionId);
+          }
+        },
+      },
+    ];
+
+    const result = await runClaudeCodeAgent(runnerArgs[0], runnerArgs[1], runnerArgs[2]);
+
+    send(ws, {
+      type: "assistant_text_done",
+      messageId,
+      model: "claude-code",
+      tokensIn: result.inputTokens,
+      tokensOut: result.outputTokens,
+      costUsd: result.totalCost,
+    });
+
+    emitDebugLog(ws, "agent:claude-code", `Query complete | cost=$${result.totalCost.toFixed(4)}`);
+  } catch (err) {
+    console.error("[agent:claude-code] Error:", err);
+    send(ws, {
+      type: "assistant_text",
+      messageId,
+      delta: `Error running Claude Code CLI: ${err instanceof Error ? err.message : "Unknown error"}\n\nMake sure Claude Code is installed and you're logged in: claude login`,
+    });
+    send(ws, {
+      type: "assistant_text_done",
+      messageId,
+      model: "claude-code",
+      tokensIn: 0,
+      tokensOut: 0,
+      costUsd: 0,
+    });
+  } finally {
+    activeAbortController = null;
+  }
 }
