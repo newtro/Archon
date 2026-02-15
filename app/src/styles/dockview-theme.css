@@ -1,0 +1,143 @@
+/* ArchonIDE custom dockview theme — maps dockview CSS vars to our existing design tokens */
+
+.dockview-theme-archon {
+  /* Core background */
+  --dv-background-color: var(--bg-primary);
+  --dv-group-view-background-color: var(--bg-primary);
+
+  /* Tab bar container */
+  --dv-tabs-and-actions-container-background-color: var(--bg-secondary);
+  --dv-tabs-and-actions-container-font-size: 13px;
+  --dv-tabs-and-actions-container-height: 32px;
+  --dv-tabs-container-scrollbar-color: var(--bg-hover);
+
+  /* Active group — visible (selected) tab */
+  --dv-activegroup-visiblepanel-tab-background-color: var(--bg-primary);
+  --dv-activegroup-visiblepanel-tab-color: var(--text-primary);
+
+  /* Active group — hidden (unselected) tabs */
+  --dv-activegroup-hiddenpanel-tab-background-color: var(--bg-secondary);
+  --dv-activegroup-hiddenpanel-tab-color: var(--text-muted);
+
+  /* Inactive group — visible tab */
+  --dv-inactivegroup-visiblepanel-tab-background-color: var(--bg-tertiary);
+  --dv-inactivegroup-visiblepanel-tab-color: var(--text-secondary);
+
+  /* Inactive group — hidden tabs */
+  --dv-inactivegroup-hiddenpanel-tab-background-color: var(--bg-secondary);
+  --dv-inactivegroup-hiddenpanel-tab-color: var(--text-muted);
+
+  /* Tab dividers and borders */
+  --dv-tab-divider-color: var(--border-secondary);
+  --dv-paneview-header-border-color: var(--border-secondary);
+  --dv-separator-border: var(--border-primary);
+
+  /* Drag-and-drop overlay */
+  --dv-drag-over-background-color: rgba(99, 102, 241, 0.12);
+  --dv-drag-over-border-color: var(--accent-indigo);
+  --dv-overlay-z-index: 999;
+
+  /* Floating groups */
+  --dv-floating-box-shadow: 8px 8px 8px 0px rgba(99, 102, 241, 0.3);
+
+  /* Icon hover */
+  --dv-icon-hover-background-color: rgba(90, 93, 94, 0.31);
+
+  /* Tab styling */
+  --dv-tab-font-size: 12px;
+  --dv-border-radius: 0px;
+  --dv-tab-margin: 0;
+
+  /* Sash (splitter) */
+  --dv-sash-color: transparent;
+  --dv-active-sash-color: var(--accent-indigo);
+  --dv-active-sash-transition-duration: 0.1s;
+  --dv-active-sash-transition-delay: 0.5s;
+
+  /* Font */
+  font-family: var(--font-sans);
+
+  /* Prevent WebView2 from treating dockview as a window drag region */
+  -webkit-app-region: no-drag;
+}
+
+/* Tab sizing to match ArchonIDE header bars */
+.dockview-theme-archon .dv-tabs-container {
+  height: 32px;
+  min-height: 32px;
+}
+
+.dockview-theme-archon .dv-tab {
+  font-size: 12px;
+  padding: 0 12px;
+  height: 32px;
+  min-height: 32px;
+}
+
+/* Drop target animation fix for custom themes */
+.dockview-theme-archon .dv-drop-target-container .dv-drop-target-anchor.dv-drop-target-anchor-container-changed {
+  opacity: 0;
+  transition: none;
+}
+
+/* Tab close button */
+.dockview-theme-archon .dv-default-tab .dv-default-tab-action {
+  color: var(--text-muted);
+  opacity: 0;
+  transition: opacity 0.1s ease, color 0.1s ease;
+}
+
+.dockview-theme-archon .dv-tab:hover .dv-default-tab-action,
+.dockview-theme-archon .dv-default-tab-action:focus-visible {
+  opacity: 1;
+}
+
+.dockview-theme-archon .dv-default-tab-action:hover {
+  color: var(--text-primary);
+}
+
+/* Active tab bottom indicator (VS Code style) */
+.dockview-theme-archon .dv-tab.dv-active-tab {
+  border-bottom: 2px solid var(--accent-indigo);
+}
+
+/* Resize sash (splitter between panels) */
+.dockview-theme-archon .dv-resize-container > .sash-container > .sash {
+  background: transparent;
+  transition: background 0.15s ease;
+}
+
+.dockview-theme-archon .dv-resize-container > .sash-container > .sash:hover,
+.dockview-theme-archon .dv-resize-container > .sash-container > .sash.active {
+  background: var(--accent-indigo);
+}
+
+/* Panel content fills available space */
+.dockview-theme-archon .dv-groupview .dv-content-container {
+  background: var(--bg-primary);
+}
+
+/* Empty area watermark (when no panels are open) */
+.dockview-theme-archon .dv-watermark {
+  background: var(--bg-primary);
+  color: var(--text-muted);
+}
+
+/* Scrollbar styling within dockview */
+.dockview-theme-archon ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.dockview-theme-archon ::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.dockview-theme-archon ::-webkit-scrollbar-thumb {
+  background: var(--bg-hover);
+  border-radius: 4px;
+}
+
+.dockview-theme-archon ::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}

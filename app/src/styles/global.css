@@ -125,26 +125,15 @@ code, pre, .mono {
 
 .title-bar { grid-area: titlebar; }
 .sidebar { grid-area: sidebar; }
-.main-content { grid-area: main; overflow: hidden; }
+.main-content {
+  grid-area: main;
+  overflow: hidden;
+  /* Prevent WebView2 from treating this area as a window drag region */
+  -webkit-app-region: no-drag;
+}
 .status-bar { grid-area: statusbar; }
 
-/* Files view layout */
-.files-layout {
-  display: flex;
-  height: 100%;
-}
-
-.files-sidebar {
-  width: 260px;
-  border-right: 1px solid var(--border-primary);
-  flex-shrink: 0;
-}
-
-.files-main {
-  flex: 1;
-  overflow: hidden;
-}
-
+/* Empty panel placeholder (used by CodeViewer/DiffViewer wrappers) */
 .files-empty {
   display: flex;
   flex-direction: column;
@@ -157,24 +146,6 @@ code, pre, .mono {
 .files-empty-text {
   color: var(--text-muted);
   font-size: 13px;
-}
-
-/* Git view layout */
-.git-layout {
-  display: flex;
-  height: 100%;
-}
-
-.git-sidebar {
-  width: 300px;
-  border-right: 1px solid var(--border-primary);
-  flex-shrink: 0;
-  overflow: hidden;
-}
-
-.git-main {
-  flex: 1;
-  overflow: hidden;
 }
 
 /* Placeholder panel for unbuilt views */
@@ -198,31 +169,3 @@ code, pre, .mono {
   color: var(--text-muted);
 }
 
-/* Workspace split layout */
-.workspace-split {
-  display: flex;
-  height: 100%;
-}
-
-.workspace-split-left,
-.workspace-split-right {
-  overflow: hidden;
-  height: 100%;
-}
-
-/* ── Draggable vertical splitter ───────────────────────────── */
-
-.workspace-splitter {
-  width: 4px;
-  flex-shrink: 0;
-  cursor: col-resize;
-  background: var(--border-primary);
-  transition: background 0.15s;
-  position: relative;
-  z-index: 5;
-}
-
-.workspace-splitter:hover,
-.workspace-splitter:active {
-  background: var(--accent-indigo);
-}

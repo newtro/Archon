@@ -63,6 +63,10 @@
   color: var(--accent-blue);
 }
 
+.sidebar-btn.open {
+  color: var(--text-secondary);
+}
+
 .sidebar-badge {
   position: absolute;
   top: 2px;
