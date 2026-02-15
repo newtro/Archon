@@ -20,6 +20,11 @@ let openrouterApiKey: string | null = null;
 // Chat provider mode: "sdk" (Agent SDK, API key) or "claude-code" (CLI, subscription)
 let chatProvider: "sdk" | "claude-code" = "sdk";
 
+// Claude Code chat settings
+let claudeCodeChatModel = "sonnet";
+let claudeCodeChatPermissionMode: "default" | "acceptEdits" | "bypassPermissions" = "bypassPermissions";
+let claudeCodeChatMcpConfigPath: string | undefined;
+
 // Claude Code session map for multi-turn conversations
 const claudeCodeSessionMap = new Map<string, string>();
 
@@ -122,6 +127,12 @@ interface SetAdoSettingsMessage {
 interface SetChatProviderMessage {
   type: "set_chat_provider";
   provider: "sdk" | "claude-code";
+  /** Model for claude-code mode (e.g. "sonnet", "opus", "haiku") */
+  model?: string;
+  /** Permission mode for claude-code (default: "bypassPermissions") */
+  permissionMode?: "default" | "acceptEdits" | "bypassPermissions";
+  /** Path to MCP server config JSON */
+  mcpConfigPath?: string;
 }
 
 interface CheckClaudeCodeMessage {
@@ -297,11 +308,22 @@ export async function handleMessage(
       console.log("[agent] Azure DevOps settings configured");
       break;
 
-    case "set_chat_provider":
-      chatProvider = (message as SetChatProviderMessage).provider;
-      send(ws, { type: "status", status: "chat_provider_set", provider: chatProvider });
-      console.log(`[agent] Chat provider set to: ${chatProvider}`);
+    case "set_chat_provider": {
+      const providerMsg = message as SetChatProviderMessage;
+      chatProvider = providerMsg.provider;
+      if (providerMsg.model) claudeCodeChatModel = providerMsg.model;
+      if (providerMsg.permissionMode) claudeCodeChatPermissionMode = providerMsg.permissionMode;
+      if (providerMsg.mcpConfigPath !== undefined) claudeCodeChatMcpConfigPath = providerMsg.mcpConfigPath || undefined;
+      send(ws, {
+        type: "status",
+        status: "chat_provider_set",
+        provider: chatProvider,
+        model: claudeCodeChatModel,
+        permissionMode: claudeCodeChatPermissionMode,
+      });
+      console.log(`[agent] Chat provider set to: ${chatProvider} (model=${claudeCodeChatModel}, perms=${claudeCodeChatPermissionMode})`);
       break;
+    }
 
     case "check_claude_code": {
       const [installed, authenticated] = await Promise.all([
@@ -1328,28 +1350,42 @@ You also have flow management tools available. When the user asks you to create,
     };
 
     const ccOptions = {
-      model: "sonnet",
+      model: claudeCodeChatModel,
       systemPrompt,
       cwd: globalProjectRoot ?? process.cwd(),
       abortSignal: activeAbortController.signal,
       maxTurns: 50,
-      permissionMode: "bypassPermissions" as const,
+      permissionMode: claudeCodeChatPermissionMode,
+      mcpConfigPath: claudeCodeChatMcpConfigPath,
     };
 
     const result = ccSessionId
       ? await resumeClaudeCodeSession(effectiveContent, ccSessionId, ccOptions, callbacks)
       : await runClaudeCodeAgent(effectiveContent, ccOptions, callbacks);
 
+    // Update cumulative session stats (same as SDK path)
+    if (sessionId) {
+      let cumulative = chatSessionStats.get(sessionId);
+      if (!cumulative) {
+        cumulative = { totalInputTokens: 0, totalOutputTokens: 0, totalCost: 0 };
+        chatSessionStats.set(sessionId, cumulative);
+      }
+      cumulative.totalInputTokens += result.inputTokens;
+      cumulative.totalOutputTokens += result.outputTokens;
+      cumulative.totalCost += result.totalCost;
+    }
+
     send(ws, {
       type: "assistant_text_done",
       messageId,
-      model: "claude-code",
+      model: `claude-code:${claudeCodeChatModel}`,
       tokensIn: result.inputTokens,
       tokensOut: result.outputTokens,
       costUsd: result.totalCost,
+      cumulativeSession: sessionId ? { ...chatSessionStats.get(sessionId)! } : undefined,
     });
 
-    emitDebugLog(ws, "agent:claude-code", `Query complete | cost=$${result.totalCost.toFixed(4)}`);
+    emitDebugLog(ws, "agent:claude-code", `Query complete | model=${claudeCodeChatModel} | cost=$${result.totalCost.toFixed(4)}`);
   } catch (err) {
     console.error("[agent:claude-code] Error:", err);
     const errMsg = err instanceof Error ? err.message : "Unknown error";

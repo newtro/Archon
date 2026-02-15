@@ -508,11 +508,28 @@ Use your tools (Read, Glob, Grep, etc.) to explore and understand this project. 
 
   // ── Provider branch: Claude Code CLI (subscription-based, no API key needed) ──
   if (provider === "claude-code") {
-    return await executeClaudeCodeLLMNode(
-      ws, node, cfg, prompt, fullSystemPrompt,
-      jsonOutputMode ? "none" : toolPreset,
-      executionId, abortController, contextAgent,
-    );
+    try {
+      return await executeClaudeCodeLLMNode(
+        ws, node, cfg, prompt, fullSystemPrompt,
+        jsonOutputMode ? "none" : toolPreset,
+        executionId, abortController, contextAgent,
+      );
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      const isNotInstalled = errMsg.includes("Failed to spawn") || errMsg.includes("ENOENT");
+      const userMessage = isNotInstalled
+        ? "Claude Code CLI is not installed. Install: curl -fsSL https://claude.ai/install.sh | bash && claude login"
+        : `Claude Code CLI error: ${errMsg}`;
+      console.error(`[flow-engine:claude-code] Node ${node.id} failed:`, errMsg);
+      return {
+        nodeId: node.id,
+        kind: "llm",
+        result: "",
+        signal: "error",
+        data: { error: userMessage, provider: "claude-code" },
+        durationMs: Date.now() - Date.now(),
+      };
+    }
   }
 
   // ── Claude Agent SDK path (unchanged) ──────────────────────────
