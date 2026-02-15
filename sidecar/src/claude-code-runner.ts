@@ -17,7 +17,10 @@ import { EventEmitter } from "events";
 
 export interface ClaudeCodeOptions {
   model?: string; // e.g. "sonnet", "opus" — maps to Claude Code model flags
+  /** System prompt — replaces Claude Code's default. Use appendSystemPrompt to add to it instead. */
   systemPrompt?: string;
+  /** Appended to Claude Code's built-in system prompt instead of replacing it. */
+  appendSystemPrompt?: string;
   cwd: string;
   abortSignal?: AbortSignal;
   /** Max turns for the agentic loop (Claude Code --max-turns) */
@@ -26,8 +29,12 @@ export interface ClaudeCodeOptions {
   permissionMode?: "default" | "acceptEdits" | "bypassPermissions";
   /** MCP server config file path (optional) */
   mcpConfigPath?: string;
-  /** Whether to allow network access */
+  /** Whether to allow network access (adds --allow-network flag) */
   allowNetwork?: boolean;
+  /** Timeout in ms — kills the CLI process if exceeded */
+  timeoutMs?: number;
+  /** Enable verbose/debug output on stderr */
+  verbose?: boolean;
   /** Additional CLI flags */
   additionalFlags?: string[];
 }
@@ -53,7 +60,8 @@ export interface ClaudeCodeResult {
 /**
  * Check if the user is authenticated with Claude Code CLI.
  * Uses `claude auth status` which is lightweight (no model call).
- * Result is cached for 60 seconds to avoid repeated subprocess spawns.
+ * Only caches positive results — negative results are rechecked each time
+ * so that logging in takes effect immediately.
  */
 let authCacheResult: boolean | null = null;
 let authCacheTime = 0;
@@ -61,12 +69,12 @@ const AUTH_CACHE_TTL_MS = 60_000;
 
 export async function isClaudeCodeAuthenticated(): Promise<boolean> {
   const now = Date.now();
-  if (authCacheResult !== null && now - authCacheTime < AUTH_CACHE_TTL_MS) {
-    return authCacheResult;
+  // Only use cache for positive results
+  if (authCacheResult === true && now - authCacheTime < AUTH_CACHE_TTL_MS) {
+    return true;
   }
 
   const result = await new Promise<boolean>((resolve) => {
-    // `claude auth status` exits 0 if logged in, non-zero otherwise
     const proc = spawn("claude", ["auth", "status"], {
       stdio: ["pipe", "pipe", "pipe"],
       timeout: 5000,
@@ -150,8 +158,12 @@ export async function runClaudeCodeAgent(
   const args: string[] = [
     "--print",
     "--output-format", "stream-json",
-    "--verbose",
   ];
+
+  // Only enable verbose when explicitly requested
+  if (options.verbose) {
+    args.push("--verbose");
+  }
 
   // Model
   if (options.model) {
@@ -171,14 +183,21 @@ export async function runClaudeCodeAgent(
     args.push("--allowedTools", "Edit,Write,MultiEdit");
   }
 
-  // System prompt
-  if (options.systemPrompt) {
+  // System prompt: prefer append (keeps Claude Code's built-in context) over replace
+  if (options.appendSystemPrompt) {
+    args.push("--append-system-prompt", options.appendSystemPrompt);
+  } else if (options.systemPrompt) {
     args.push("--system-prompt", options.systemPrompt);
   }
 
   // MCP config
   if (options.mcpConfigPath) {
     args.push("--mcp-config", options.mcpConfigPath);
+  }
+
+  // Network access
+  if (options.allowNetwork) {
+    args.push("--allow-network");
   }
 
   // Additional flags
@@ -207,9 +226,37 @@ export async function runClaudeCodeAgent(
     let totalCost = 0;
     let sessionId: string | undefined;
     let stderr = "";
+    let settled = false;
 
     // Track tool call timings
     const toolStartTimes = new Map<string, number>();
+
+    const settle = (fn: () => void) => {
+      if (!settled) {
+        settled = true;
+        fn();
+      }
+    };
+
+    // Handle timeout
+    let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+    if (options.timeoutMs && options.timeoutMs > 0) {
+      timeoutTimer = setTimeout(() => {
+        proc.kill("SIGTERM");
+        // Give it 5s to exit gracefully, then SIGKILL
+        setTimeout(() => {
+          try { proc.kill("SIGKILL"); } catch { /* already dead */ }
+        }, 5000);
+        settle(() => {
+          if (fullResult) {
+            // Partial result is better than nothing
+            resolve({ result: fullResult, totalCost, inputTokens, outputTokens, sessionId });
+          } else {
+            reject(new Error(`Claude Code CLI timed out after ${options.timeoutMs}ms`));
+          }
+        });
+      }, options.timeoutMs);
+    }
 
     // Handle abort
     if (options.abortSignal) {
@@ -307,8 +354,10 @@ export async function runClaudeCodeAgent(
         }
 
         default: {
-          // Log unknown event types for debugging
-          console.log(`[claude-code-runner] Event: ${type}`);
+          // Only log unknown types in verbose mode to reduce noise
+          if (options.verbose) {
+            console.log(`[claude-code-runner] Event: ${type}`);
+          }
           break;
         }
       }
@@ -323,10 +372,14 @@ export async function runClaudeCodeAgent(
     });
 
     proc.on("error", (err) => {
-      reject(new Error(`Failed to spawn claude CLI: ${err.message}. Is Claude Code installed? Run: curl -fsSL https://claude.ai/install.sh | bash`));
+      if (timeoutTimer) clearTimeout(timeoutTimer);
+      settle(() => {
+        reject(new Error(`Failed to spawn claude CLI: ${err.message}. Is Claude Code installed? Run: curl -fsSL https://claude.ai/install.sh | bash`));
+      });
     });
 
     proc.on("close", (code) => {
+      if (timeoutTimer) clearTimeout(timeoutTimer);
       parser.flush();
 
       const result: ClaudeCodeResult = {
@@ -341,16 +394,18 @@ export async function runClaudeCodeAgent(
         callbacks.onResult(result);
       }
 
-      if (code !== 0 && !options.abortSignal?.aborted) {
-        // Non-zero exit but may still have partial results
-        if (fullResult) {
-          resolve(result);
+      settle(() => {
+        if (code !== 0 && !options.abortSignal?.aborted) {
+          // Non-zero exit but may still have partial results
+          if (fullResult) {
+            resolve(result);
+          } else {
+            reject(new Error(`Claude Code exited with code ${code}: ${stderr.slice(0, 500)}`));
+          }
         } else {
-          reject(new Error(`Claude Code exited with code ${code}: ${stderr.slice(0, 500)}`));
+          resolve(result);
         }
-      } else {
-        resolve(result);
-      }
+      });
     });
   });
 }

@@ -25,8 +25,18 @@ let claudeCodeChatModel = "sonnet";
 let claudeCodeChatPermissionMode: "default" | "acceptEdits" | "bypassPermissions" = "bypassPermissions";
 let claudeCodeChatMcpConfigPath: string | undefined;
 
-// Claude Code session map for multi-turn conversations
+// Claude Code session map for multi-turn conversations (capped to prevent unbounded growth)
 const claudeCodeSessionMap = new Map<string, string>();
+const CC_SESSION_MAP_MAX = 100;
+
+function setClaudeCodeSession(frontendId: string, ccSessionId: string): void {
+  // Evict oldest entry if at capacity
+  if (claudeCodeSessionMap.size >= CC_SESSION_MAP_MAX && !claudeCodeSessionMap.has(frontendId)) {
+    const oldest = claudeCodeSessionMap.keys().next().value;
+    if (oldest) claudeCodeSessionMap.delete(oldest);
+  }
+  claudeCodeSessionMap.set(frontendId, ccSessionId);
+}
 
 export function getOpenRouterApiKey(): string | null {
   return openrouterApiKey;
@@ -254,6 +264,14 @@ export async function handleMessage(
 
     case "user_message":
       if (chatProvider === "claude-code") {
+        // Claude Code CLI doesn't support inline images — warn the user
+        if (message.images && message.images.length > 0) {
+          send(ws, {
+            type: "assistant_text",
+            messageId: crypto.randomUUID(),
+            delta: "⚠️ Images are not supported in Claude Code CLI mode. Switching to text-only. To use images, switch back to SDK mode.",
+          });
+        }
         await handleUserMessageClaudeCode(ws, message.content, message.history, message.sessionId);
       } else {
         await handleUserMessage(ws, message.content, message.images, message.history, message.sessionId);
@@ -1279,8 +1297,9 @@ async function handleUserMessageClaudeCode(
     // Check if we have a prior Claude Code session to resume
     const ccSessionId = sessionId ? claudeCodeSessionMap.get(sessionId) : undefined;
 
-    // Build system prompt (same logic as SDK path)
-    let systemPrompt: string | undefined;
+    // Build system prompt context — append to Claude Code's built-in prompt
+    // rather than replacing it, so we keep its native project awareness
+    let appendPrompt: string | undefined;
     if (globalProjectRoot) {
       let gitContext = "";
       try {
@@ -1294,16 +1313,14 @@ async function handleUserMessageClaudeCode(
           gitContext = `\n\nGit status:
 - Branch: ${gitStatus.branch}${gitStatus.tracking ? ` (tracking ${gitStatus.tracking})` : ""}
 - Ahead: ${gitStatus.ahead}, Behind: ${gitStatus.behind}
-- Changes: ${totalChanges} total${gitContext}
+- Changes: ${totalChanges} total (${gitStatus.staged.length} staged, ${gitStatus.unstaged.length} unstaged, ${gitStatus.untracked.length} untracked)
 - Recent commits:\n${recentCommits || "  (none)"}`;
         }
       } catch { /* best-effort */ }
 
-      systemPrompt = `You are an AI coding assistant embedded in an IDE. The user has opened the project located at: ${globalProjectRoot}
+      appendPrompt = `The user has opened the project located at: ${globalProjectRoot}
 
 When the user says "this app", "the project", "this codebase", or similar, they are referring to THEIR project at that path — not the IDE application itself.
-
-Focus exclusively on the user's project. Use your tools to explore and understand it before answering questions about it.
 
 You also have flow management tools available. When the user asks you to create, modify, delete, list, or describe a flow, workflow, or pipeline, use the flow management tools.${gitContext}`;
     }
@@ -1325,6 +1342,10 @@ You also have flow management tools available. When the user asks you to create,
 
     // Track tool calls for Context Agent ingestion
     const toolCallLog: Array<{ id: string; name: string; args: Record<string, unknown>; result?: string; isError?: boolean }> = [];
+
+    // Capture a local ref to the abort controller — the finally block sets activeAbortController
+    // to null, but Context Agent ingestion is async and could race with it
+    const localAbortController = activeAbortController;
 
     emitDebugLog(ws, "agent:claude-code", `Starting query | messageId=${messageId} | cwd=${globalProjectRoot ?? "(none)"} | resuming=${!!ccSessionId}`);
 
@@ -1357,21 +1378,22 @@ You also have flow management tools available. When the user asks you to create,
         });
       },
       onResult: (r: { sessionId?: string; inputTokens: number; outputTokens: number; totalCost: number }) => {
-        // Store session ID for future resume
+        // Store session ID for future resume (capped map)
         if (r.sessionId && sessionId) {
-          claudeCodeSessionMap.set(sessionId, r.sessionId);
+          setClaudeCodeSession(sessionId, r.sessionId);
         }
       },
     };
 
     const ccOptions = {
       model: claudeCodeChatModel,
-      systemPrompt,
+      appendSystemPrompt: appendPrompt,
       cwd: globalProjectRoot ?? process.cwd(),
-      abortSignal: activeAbortController.signal,
+      abortSignal: localAbortController.signal,
       maxTurns: 50,
       permissionMode: claudeCodeChatPermissionMode,
       mcpConfigPath: claudeCodeChatMcpConfigPath,
+      timeoutMs: 10 * 60 * 1000, // 10 minute safety timeout
     };
 
     const result = ccSessionId
@@ -1398,7 +1420,7 @@ You also have flow management tools available. When the user asks you to create,
           toolCallLog.map((t) => ({ name: t.name, args: t.args, result: t.result })),
           claudeCodeChatModel,
           ws,
-          activeAbortController!,
+          localAbortController,
         );
       } catch (err) {
         console.warn("[agent:claude-code] Context Agent ingestion error:", err);

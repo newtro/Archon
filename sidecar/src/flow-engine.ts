@@ -508,6 +508,7 @@ Use your tools (Read, Glob, Grep, etc.) to explore and understand this project. 
 
   // ── Provider branch: Claude Code CLI (subscription-based, no API key needed) ──
   if (provider === "claude-code") {
+    const ccStartTime = Date.now();
     try {
       return await executeClaudeCodeLLMNode(
         ws, node, cfg, prompt, fullSystemPrompt,
@@ -527,7 +528,7 @@ Use your tools (Read, Glob, Grep, etc.) to explore and understand this project. 
         result: "",
         signal: "error",
         data: { error: userMessage, provider: "claude-code" },
-        durationMs: Date.now() - Date.now(),
+        durationMs: Date.now() - ccStartTime,
       };
     }
   }
@@ -1065,15 +1066,19 @@ async function executeClaudeCodeLLMNode(
 
   const ccModel = (cfg.claudeCodeModel as string) ?? (cfg.model as string) ?? "sonnet";
 
+  // Track tool calls for Context Agent
+  const toolCallLog: Array<{ name: string; args: Record<string, unknown>; result?: string }> = [];
+
   const { result: finalResult, totalCost, inputTokens, outputTokens } = await runClaudeCodeAgent(
     prompt,
     {
       model: ccModel,
-      systemPrompt,
+      appendSystemPrompt: systemPrompt,
       cwd: resolveNodeCwd(cfg),
       abortSignal: abortController.signal,
       maxTurns: (cfg.maxTurns as number) ?? 50,
       permissionMode,
+      timeoutMs: (cfg.timeoutMs as number) ?? 10 * 60 * 1000,
     },
     {
       onTextDelta: (text) => {
@@ -1086,6 +1091,7 @@ async function executeClaudeCodeLLMNode(
         });
       },
       onToolCallStart: (id, name, args) => {
+        toolCallLog.push({ name, args });
         emitEvent(ws, {
           type: "node_tool_call",
           executionId,
@@ -1101,6 +1107,9 @@ async function executeClaudeCodeLLMNode(
         console.log(`[flow-engine:claude-code] TOOL_START: ${name} (${id})`);
       },
       onToolCallDone: (id, toolResult, isError, durationMs) => {
+        // Update the last matching tool call entry with its result
+        const entry = toolCallLog.findLast((t) => !t.result);
+        if (entry) entry.result = toolResult;
         emitEvent(ws, {
           type: "node_tool_result",
           executionId,
@@ -1128,12 +1137,12 @@ async function executeClaudeCodeLLMNode(
     cumulative.totalOutputTokens += outputTokens;
   }
 
-  // Context Agent: ingest result
+  // Context Agent: ingest result with tool history
   if (contextAgent) {
     try {
       await contextAgent.ingestResult(
         result,
-        [],
+        toolCallLog,
         ccModel,
         ws,
         abortController,
