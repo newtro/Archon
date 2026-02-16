@@ -16,6 +16,7 @@ import {
   RegistryWrapper,
   SettingsWrapper,
   StartupWrapper,
+  GatewayWrapper,
 } from "./DockPanelWrappers";
 
 interface DockAreaProps {
@@ -39,6 +40,7 @@ export function DockArea({ onApiReady }: DockAreaProps) {
     registry: RegistryWrapper,
     settings: SettingsWrapper,
     startup: StartupWrapper,
+    gateway: GatewayWrapper,
   }), []);
 
   // Wire up navigation functions for AppStateContext

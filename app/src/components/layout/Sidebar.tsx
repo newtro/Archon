@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback } from "react";
-import { MessageSquare, Workflow, FolderOpen, Settings, ScrollText, Globe, GitBranch } from "lucide-react";
+import { MessageSquare, Workflow, FolderOpen, Settings, ScrollText, Globe, GitBranch, Radio } from "lucide-react";
 import { useDockview } from "../../contexts/DockviewContext";
 import { useAppState } from "../../contexts/AppStateContext";
 import { openOrFocusPanel } from "../../lib/layout-persistence";
 import "./Sidebar.css";
 
-export type SidebarView = "startup" | "chat" | "flows" | "files" | "git" | "logs" | "registry" | "settings";
+export type SidebarView = "startup" | "chat" | "flows" | "files" | "git" | "logs" | "registry" | "gateway" | "settings";
 
 const NAV_ITEMS: Array<{ view: SidebarView; icon: typeof MessageSquare; label: string; component: string }> = [
   { view: "chat", icon: MessageSquare, label: "Chat", component: "chat" },
@@ -14,6 +14,7 @@ const NAV_ITEMS: Array<{ view: SidebarView; icon: typeof MessageSquare; label: s
   { view: "git", icon: GitBranch, label: "Source Control", component: "git" },
   { view: "logs", icon: ScrollText, label: "Logs", component: "logs" },
   { view: "registry", icon: Globe, label: "Registry", component: "registry" },
+  { view: "gateway", icon: Radio, label: "Gateway", component: "gateway" },
 ];
 
 export function Sidebar() {

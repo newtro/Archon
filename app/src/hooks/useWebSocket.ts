@@ -23,6 +23,8 @@ interface UseWebSocketOptions {
   onClaudeCodeStatus?: (status: { installed: boolean; authenticated: boolean }) => void;
   /** Called when Claude Code CLI is not installed (during a chat attempt) */
   onClaudeCodeNotInstalled?: () => void;
+  /** Called when a gateway-related message is received from sidecar */
+  onGatewayMessage?: (msg: Record<string, unknown>) => void;
 }
 
 const SIDECAR_PORT = 9399;
@@ -45,7 +47,7 @@ function getToolLogSummary(name: string, args: Record<string, unknown>): string 
   }
 }
 
-export function useWebSocket({ onMessage, onStatusChange, onFlowEvent, onConnect, onLogEntry, onContextViewEvent, onContextClassification, onContextStateUpdate, onContextRawResponse, onFlowPreview, onGitMessage, onClaudeCodeStatus, onClaudeCodeNotInstalled }: UseWebSocketOptions) {
+export function useWebSocket({ onMessage, onStatusChange, onFlowEvent, onConnect, onLogEntry, onContextViewEvent, onContextClassification, onContextStateUpdate, onContextRawResponse, onFlowPreview, onGitMessage, onClaudeCodeStatus, onClaudeCodeNotInstalled, onGatewayMessage }: UseWebSocketOptions) {
   const wsRef = useRef<WebSocket | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<string>("disconnected");
   const reconnectAttempts = useRef(0);
@@ -65,6 +67,7 @@ export function useWebSocket({ onMessage, onStatusChange, onFlowEvent, onConnect
   const onGitMessageRef = useRef(onGitMessage);
   const onClaudeCodeStatusRef = useRef(onClaudeCodeStatus);
   const onClaudeCodeNotInstalledRef = useRef(onClaudeCodeNotInstalled);
+  const onGatewayMessageRef = useRef(onGatewayMessage);
   onMessageRef.current = onMessage;
   onStatusChangeRef.current = onStatusChange;
   onFlowEventRef.current = onFlowEvent;
@@ -78,6 +81,7 @@ export function useWebSocket({ onMessage, onStatusChange, onFlowEvent, onConnect
   onGitMessageRef.current = onGitMessage;
   onClaudeCodeStatusRef.current = onClaudeCodeStatus;
   onClaudeCodeNotInstalledRef.current = onClaudeCodeNotInstalled;
+  onGatewayMessageRef.current = onGatewayMessage;
 
   // Accumulator for streaming assistant messages
   const streamingMessage = useRef<ChatMessage | null>(null);
@@ -637,6 +641,17 @@ export function useWebSocket({ onMessage, onStatusChange, onFlowEvent, onConnect
       case "git_commit_msg_response":
       case "git_show_response":
         onGitMessageRef.current?.(data);
+        break;
+
+      // ── Gateway messages ──────────────────────────────────────────
+      case "gateway_status":
+      case "tunnel_status":
+      case "webhook_triggered":
+      case "webhook_list":
+      case "channel_status":
+      case "gateway_log":
+      case "webhook_test_result":
+        onGatewayMessageRef.current?.(data);
         break;
 
       // ── Flow tool requests from sidecar (AI agent) ─────────────────

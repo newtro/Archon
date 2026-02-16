@@ -6,6 +6,7 @@ import { useFlowExecution, type FlowExecutionState } from "../hooks/useFlowExecu
 import { useContextView } from "../hooks/useContextView";
 import { useSidecarHealth } from "../hooks/useSidecarHealth";
 import { clearCompletedTools } from "../lib/tool-completion-store";
+import { useToast } from "../components/ui/Toast";
 import { getSetting, setSetting } from "../lib/store";
 import { listFlows, loadFlow } from "../lib/flow-storage";
 import { createSession, saveMessage, loadSessionMessages, deleteSession as deleteSessionDb } from "../lib/chat-storage";
@@ -25,6 +26,70 @@ import type {
   HistoryMessage,
   ContextViewState,
 } from "../lib/types";
+
+// ── Gateway types (mirrored from sidecar) ───────────────────
+
+interface GatewayTunnelStatus {
+  provider: string;
+  state: "stopped" | "starting" | "connected" | "reconnecting" | "error";
+  publicUrl: string | null;
+  error: string | null;
+  uptimeMs: number;
+  latencyMs?: number;
+}
+
+interface GatewayChannelStatus {
+  type: "telegram" | "discord";
+  state: "stopped" | "connecting" | "connected" | "error";
+  botUsername: string | null;
+  error: string | null;
+}
+
+interface GatewayStatusType {
+  running: boolean;
+  port: number;
+  tunnel: GatewayTunnelStatus;
+  channels: GatewayChannelStatus[];
+  webhookCount: number;
+}
+
+interface GatewayWebhookEndpoint {
+  id: string;
+  flowId: string;
+  flowName: string;
+  token: string;
+  enabled: boolean;
+  createdAt: string;
+  lastTriggeredAt: string | null;
+}
+
+interface GatewayWebhookEvent {
+  id: string;
+  endpointId: string;
+  flowId: string;
+  timestamp: string;
+  method: string;
+  statusCode: number;
+  durationMs: number;
+}
+
+interface GatewayLogEntryType {
+  timestamp: string;
+  level: "info" | "warn" | "error";
+  source: string;
+  message: string;
+  details?: Record<string, unknown>;
+}
+
+interface GatewayWebhookTestResult {
+  webhookId: string;
+  statusCode: number;
+  contentType: string;
+  body: string;
+  headers?: Record<string, string>;
+  durationMs: number;
+  error?: string;
+}
 
 // ── Context value type ──────────────────────────────────────
 
@@ -108,6 +173,14 @@ export interface AppState {
   // Sidecar health
   sidecarLatency: number | null;
 
+  // Gateway
+  gatewayStatus: GatewayStatusType | null;
+  gatewayWebhooks: GatewayWebhookEndpoint[];
+  gatewayLogs: GatewayLogEntryType[];
+  gatewayEvents: GatewayWebhookEvent[];
+  gatewayChannelStatuses: GatewayChannelStatus[];
+  gatewayTestResult: GatewayWebhookTestResult | null;
+
   // Navigation helpers — set by DockArea after dockview is ready
   openPanel: (component: string, options?: { id?: string; title?: string; params?: Record<string, unknown> }) => void;
   setOpenPanelFn: (fn: AppState["openPanel"]) => void;
@@ -141,6 +214,22 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const [lastGitMessage, setLastGitMessage] = useState<WSMessageFromSidecar | null>(null);
   const [gitStatus, setGitStatus] = useState<GitStatusData | null>(null);
   const [gitDiff, setGitDiff] = useState<{ path: string; diff: string; staged: boolean } | null>(null);
+
+  // Gateway
+  const [gatewayStatus, setGatewayStatus] = useState<GatewayStatusType | null>(null);
+  const [gatewayWebhooks, setGatewayWebhooks] = useState<GatewayWebhookEndpoint[]>([]);
+  const [gatewayLogs, setGatewayLogs] = useState<GatewayLogEntryType[]>([]);
+  const [gatewayEvents, setGatewayEvents] = useState<GatewayWebhookEvent[]>([]);
+  const [gatewayChannelStatuses, setGatewayChannelStatuses] = useState<GatewayChannelStatus[]>([]);
+  const [gatewayTestResult, setGatewayTestResult] = useState<GatewayWebhookTestResult | null>(null);
+
+  // Toast notifications
+  const { addToast } = useToast();
+  const toastRef = useRef(addToast);
+  toastRef.current = addToast;
+
+  // Track previous tunnel state for toast notifications
+  const prevTunnelStateRef = useRef<string | null>(null);
 
   // Startup / recent projects
   const [recentProjects, setRecentProjects] = useState<RecentProject[]>([]);
@@ -425,6 +514,66 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     },
     onClaudeCodeNotInstalled: () => {
       setClaudeCodeStatus({ installed: false, authenticated: false });
+    },
+    onGatewayMessage: (msg) => {
+      const data = msg as Record<string, unknown>;
+      switch (data.type) {
+        case "gateway_status": {
+          const status = data.status as GatewayStatusType;
+          setGatewayStatus(status);
+          // Update tray icon status text
+          const tunnelText = status.tunnel?.state === "connected" && status.tunnel.publicUrl
+            ? `Tunnel: ${status.tunnel.publicUrl}`
+            : `Tunnel: ${status.tunnel?.state ?? "stopped"}`;
+          invoke("update_tray_status", { status: `Gateway: ${status.running ? "Running" : "Stopped"} | ${tunnelText}` }).catch(() => {});
+          break;
+        }
+        case "tunnel_status": {
+          const tunnelStatus = data.status as GatewayStatusType["tunnel"];
+          setGatewayStatus((prev) =>
+            prev ? { ...prev, tunnel: tunnelStatus } : null
+          );
+          // Toast notifications for tunnel state changes
+          const prevState = prevTunnelStateRef.current;
+          const newState = tunnelStatus.state;
+          if (prevState === "connected" && (newState === "reconnecting" || newState === "error")) {
+            toastRef.current?.("Tunnel disconnected" + (tunnelStatus.error ? `: ${tunnelStatus.error}` : ""), "error", 8000);
+          } else if (prevState && prevState !== "connected" && newState === "connected") {
+            toastRef.current?.("Tunnel reconnected: " + (tunnelStatus.publicUrl ?? ""), "success");
+          }
+          prevTunnelStateRef.current = newState;
+          // Update tray
+          const trayText = newState === "connected" && tunnelStatus.publicUrl
+            ? `Tunnel: ${tunnelStatus.publicUrl}`
+            : `Tunnel: ${newState}`;
+          invoke("update_tray_status", { status: trayText }).catch(() => {});
+          break;
+        }
+        case "webhook_list":
+          setGatewayWebhooks(data.webhooks as GatewayWebhookEndpoint[]);
+          break;
+        case "webhook_triggered":
+          setGatewayEvents((prev) => [data.event as GatewayWebhookEvent, ...prev].slice(0, 100));
+          break;
+        case "webhook_test_result":
+          setGatewayTestResult(data.result as GatewayWebhookTestResult);
+          break;
+        case "channel_status": {
+          const chStatus = data.status as GatewayChannelStatus;
+          setGatewayChannelStatuses((prev) => {
+            const filtered = prev.filter((s) => s.type !== chStatus.type);
+            // Only add if not in stopped state
+            if (chStatus.state !== "stopped") {
+              return [...filtered, chStatus];
+            }
+            return filtered;
+          });
+          break;
+        }
+        case "gateway_log":
+          setGatewayLogs((prev) => [...prev, data.entry as GatewayLogEntryType].slice(-200));
+          break;
+      }
     },
     onConnect: (directSend) => {
       getSetting<string>("apiKey", "").then((key) => {
@@ -748,6 +897,14 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     setPublishingFlow,
 
     sidecarLatency: sidecarHealth.latencyMs,
+
+    // Gateway
+    gatewayStatus,
+    gatewayWebhooks,
+    gatewayLogs,
+    gatewayEvents,
+    gatewayChannelStatuses,
+    gatewayTestResult,
 
     openPanel: openPanelRef.current,
     setOpenPanelFn,

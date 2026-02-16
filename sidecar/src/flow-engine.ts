@@ -90,7 +90,8 @@ function findNode(flow: FlowDefinition, id: string): SerializedNode | undefined 
 }
 
 function findStartNode(flow: FlowDefinition): SerializedNode | undefined {
-  return flow.nodes.find((n) => n.kind === "start");
+  // webhook-trigger nodes act as alternative entry points
+  return flow.nodes.find((n) => n.kind === "start" || n.kind === "webhook-trigger");
 }
 
 function getOutgoingEdges(flow: FlowDefinition, nodeId: string, signal?: string): SerializedEdge[] {
@@ -257,7 +258,7 @@ export async function executeFlow(
   _sessionId?: string,
   contextAgent?: ContextAgent,
   chatProvider?: "sdk" | "claude-code",
-): Promise<void> {
+): Promise<FlowState> {
   const executionId = crypto.randomUUID();
   const abortController = new AbortController();
   activeExecutions.set(executionId, abortController);
@@ -330,6 +331,8 @@ export async function executeFlow(
       if (key.startsWith(`${executionId}:`)) rawMessageCache.delete(key);
     }
   }
+
+  return state;
 }
 
 async function executeNode(
@@ -356,6 +359,7 @@ async function executeNode(
 
     switch (node.kind) {
       case "start":
+      case "webhook-trigger":
         output = { nodeId: node.id, kind: node.kind, result: input, signal: "success", durationMs: 0 };
         break;
 
@@ -419,6 +423,10 @@ async function executeNode(
 
       case "ado-pr-write":
         output = await executeAdoPrWriteNode(ws, node, cfg, input, executionId);
+        break;
+
+      case "webhook-response":
+        output = executeWebhookResponseNode(node, cfg, input);
         break;
 
       default:
@@ -2062,4 +2070,28 @@ function buildWritePreview(input: AdoPrWriteInput): string {
   }
 
   return parts.join("\n") || "(No review actions)";
+}
+
+// ── Webhook Response Node ────────────────────────────────────────────────────
+
+function executeWebhookResponseNode(
+  node: SerializedNode,
+  cfg: Record<string, unknown>,
+  input: string,
+): NodeOutput {
+  const statusCode = (cfg.statusCode as number) ?? 200;
+  const contentType = (cfg.contentType as string) ?? "application/json";
+  const responseTemplate = (cfg.responseTemplate as string) ?? "{{input}}";
+
+  // Render template — replace {{input}} with upstream output
+  const responseBody = responseTemplate.replace(/\{\{input\}\}/g, input);
+
+  return {
+    nodeId: node.id,
+    kind: "webhook-response",
+    result: responseBody,
+    signal: "success",
+    data: { statusCode, contentType, headers: { "Content-Type": contentType } },
+    durationMs: 0,
+  };
 }

@@ -28,6 +28,8 @@ export type NodeKind =
   // Integration nodes
   | "ado-pr-read"
   | "ado-pr-write"
+  | "webhook-trigger"
+  | "webhook-response"
   // Structure nodes
   | "start"
   | "end";
@@ -48,6 +50,8 @@ export const NODE_CATEGORY: Record<NodeKind, NodeCategory> = {
   "project-context": "context",
   "ado-pr-read": "integration",
   "ado-pr-write": "integration",
+  "webhook-trigger": "integration",
+  "webhook-response": "integration",
   start: "structure",
   end: "structure",
 };
@@ -268,6 +272,28 @@ export const NODE_REGISTRY: Record<NodeKind, NodeMeta> = {
     },
   },
 
+  "webhook-trigger": {
+    kind: "webhook-trigger",
+    label: "Webhook Trigger",
+    description: "Receive incoming webhook requests as flow entry point",
+    category: "integration",
+    color: CATEGORY_COLORS.integration,
+    icon: "M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z M12 8v8 M8 12h8",
+    maxInputs: 0,
+    maxOutputs: 1,
+  },
+
+  "webhook-response": {
+    kind: "webhook-response",
+    label: "Webhook Response",
+    description: "Construct and return an HTTP response to the webhook caller",
+    category: "integration",
+    color: CATEGORY_COLORS.integration,
+    icon: "M22 2L11 13 M22 2l-7 20-4-9-9-4 20-7z",
+    maxInputs: 1,
+    maxOutputs: 1,
+  },
+
   // Structure Nodes
   start: {
     kind: "start",
@@ -449,6 +475,22 @@ export interface AdoPrWriteNodeConfig {
   repositoryName: string;
 }
 
+export interface WebhookTriggerNodeConfig {
+  /** Optional path suffix (appended to the webhook URL for readability) */
+  pathHint: string;
+  /** Whether to pass the raw request body or parse as JSON */
+  parseBody: boolean;
+}
+
+export interface WebhookResponseNodeConfig {
+  /** HTTP status code to return */
+  statusCode: number;
+  /** Response content type */
+  contentType: string;
+  /** Template for the response body — use {{input}} for upstream node output */
+  responseTemplate: string;
+}
+
 export interface StartNodeConfig {
   inputSchema?: string;  // optional JSON schema for expected input
 }
@@ -473,6 +515,8 @@ export type FlowNodeConfig =
   | { kind: "project-context"; config: ProjectContextNodeConfig }
   | { kind: "ado-pr-read"; config: AdoPrReadNodeConfig }
   | { kind: "ado-pr-write"; config: AdoPrWriteNodeConfig }
+  | { kind: "webhook-trigger"; config: WebhookTriggerNodeConfig }
+  | { kind: "webhook-response"; config: WebhookResponseNodeConfig }
   | { kind: "start"; config: StartNodeConfig }
   | { kind: "end"; config: EndNodeConfig };
 
@@ -514,6 +558,10 @@ export function getDefaultConfig(kind: NodeKind): FlowNodeConfig {
       return { kind, config: { projectName: "", repositoryName: "", trackIterations: false } };
     case "ado-pr-write":
       return { kind, config: { requireHumanApproval: true, setVote: true, defaultVote: "approve-with-suggestions" as AdoPrWriteVote, postInlineComments: true, postSummaryComment: true, threadStatus: "active" as AdoPrWriteThreadStatus, projectName: "", repositoryName: "" } };
+    case "webhook-trigger":
+      return { kind, config: { pathHint: "", parseBody: true } };
+    case "webhook-response":
+      return { kind, config: { statusCode: 200, contentType: "application/json", responseTemplate: '{"status":"success","result":"{{input}}"}' } };
     case "start":
       return { kind, config: {} };
     case "end":

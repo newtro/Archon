@@ -16,6 +16,8 @@ import { HandoffConfig } from "./config/HandoffConfig";
 import { ProjectContextConfig } from "./config/ProjectContextConfig";
 import { AdoPrReadConfig } from "./config/AdoPrReadConfig";
 import { AdoPrWriteConfig } from "./config/AdoPrWriteConfig";
+import { WebhookTriggerConfig } from "./config/WebhookTriggerConfig";
+import { WebhookResponseConfig } from "./config/WebhookResponseConfig";
 import { StartConfig } from "./config/StartConfig";
 import { EndConfig } from "./config/EndConfig";
 import "./NodeConfigPanel.css";
@@ -122,6 +124,18 @@ const NODE_DOCS: Record<NodeKind, DocSection[]> = {
     { heading: "Safety Gate", body: "By default, requires human approval before posting. The node pauses and shows proposed comments for review. Disable this for fully automated pipelines." },
     { heading: "Outputs", body: "Rich signals: success (all posted), partial (some comments posted but errors on others), error (API failure), blocked (waiting for human approval)." },
   ],
+  "webhook-trigger": [
+    { heading: "Overview", body: "Receives incoming webhook POST requests as the flow entry point. Use this instead of a Start node when the flow is triggered externally via webhooks." },
+    { heading: "Setup", body: "1. Add this node to your flow. 2. Open the Gateway tab in the sidebar. 3. Create a webhook endpoint for this flow. 4. The webhook URL and token will be generated automatically." },
+    { heading: "Input Data", body: "The webhook request body becomes the input for downstream nodes. JSON bodies are parsed automatically when 'Parse body as JSON' is enabled." },
+    { heading: "Usage Tips", body: "Pair with a Webhook Response node at the end of your flow to send custom HTTP responses back to the caller. Without a response node, callers receive a 202 Accepted." },
+  ],
+  "webhook-response": [
+    { heading: "Overview", body: "Constructs and returns an HTTP response to the webhook caller. Place this at the end of a webhook-triggered flow to send results back to the external system." },
+    { heading: "Status Code", body: "The HTTP status code to return (e.g. 200 for success, 400 for bad request). Common codes are provided as quick-select buttons." },
+    { heading: "Response Template", body: "Template for the response body. Use {{input}} to include the upstream node's output. Typically JSON for API consumers." },
+    { heading: "How It Works", body: "When a webhook triggers a flow, the flow runs to completion. If the flow contains a Webhook Response node, its output is sent back as the HTTP response instead of the default 202 Accepted." },
+  ],
   start: [
     { heading: "Overview", body: "The entry point of every flow. When a flow executes, it begins here. Each flow must have exactly one Start node." },
     { heading: "Input Schema", body: "Optional JSON Schema defining the expected input structure. When set, the flow engine validates incoming data against this schema before execution begins." },
@@ -156,6 +170,8 @@ const CONFIG_COMPONENTS: Record<NodeKind, React.ComponentType<{ config: Record<s
   "project-context": ProjectContextConfig,
   "ado-pr-read": AdoPrReadConfig,
   "ado-pr-write": AdoPrWriteConfig,
+  "webhook-trigger": WebhookTriggerConfig,
+  "webhook-response": WebhookResponseConfig,
   start: StartConfig,
   end: EndConfig,
 };
