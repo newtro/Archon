@@ -8,7 +8,7 @@ export type NodeKind =
   | "tool" | "transformer"
   | "router" | "parallel" | "join" | "human-review" | "sub-flow"
   | "memory" | "handoff" | "project-context"
-  | "ado-pr-read" | "ado-pr-write"
+  | "ado-pr-read" | "ado-pr-write" | "webhook-trigger" | "webhook-response"
   | "start" | "end";
 
 export type ToolPreset = "none" | "read-only" | "full-access";

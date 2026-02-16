@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import type { DockviewApi } from "dockview-react";
 import { AppStateProvider, useAppState } from "./contexts/AppStateContext";
 import { DockviewContext } from "./contexts/DockviewContext";
+import { ToastProvider } from "./components/ui/Toast";
 import { Sidebar } from "./components/layout/Sidebar";
 import { StatusBar } from "./components/layout/StatusBar";
 import { TitleBar } from "./components/layout/TitleBar";
@@ -77,9 +78,11 @@ function AppContent() {
 
 function App() {
   return (
-    <AppStateProvider>
-      <AppContent />
-    </AppStateProvider>
+    <ToastProvider>
+      <AppStateProvider>
+        <AppContent />
+      </AppStateProvider>
+    </ToastProvider>
   );
 }
 

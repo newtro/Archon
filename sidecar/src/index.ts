@@ -1,7 +1,7 @@
 import { WebSocketServer, WebSocket } from "ws";
 import { execSync } from "child_process";
 import { createConnection } from "net";
-import { handleMessage } from "./agent.js";
+import { handleMessage, gatewayManager } from "./agent.js";
 
 const PORT = 9399;
 
@@ -52,6 +52,7 @@ async function start() {
 
   wss.on("connection", (ws: WebSocket) => {
     console.log("[sidecar] Client connected");
+    gatewayManager.registerClient(ws);
 
     ws.on("message", async (data: Buffer) => {
       try {

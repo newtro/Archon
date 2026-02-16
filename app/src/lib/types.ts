@@ -367,7 +367,15 @@ export type WSMessageFromSidecar =
   | { type: "flow_tool_get"; requestId: string; flowId?: string; name?: string }
   | { type: "flow_tool_list"; requestId: string }
   | { type: "flow_tool_update"; requestId: string; flowId: string; patch: Record<string, unknown> }
-  | { type: "flow_tool_delete"; requestId: string; flowId: string };
+  | { type: "flow_tool_delete"; requestId: string; flowId: string }
+  // Gateway messages
+  | { type: "gateway_status"; status: Record<string, unknown> }
+  | { type: "tunnel_status"; status: Record<string, unknown> }
+  | { type: "webhook_triggered"; event: Record<string, unknown> }
+  | { type: "webhook_list"; webhooks: Record<string, unknown>[] }
+  | { type: "channel_status"; status: Record<string, unknown> }
+  | { type: "gateway_log"; entry: Record<string, unknown> }
+  | { type: "webhook_test_result"; result: Record<string, unknown> };
 
 /** Flow execution events from sidecar */
 export type FlowExecutionEvent =

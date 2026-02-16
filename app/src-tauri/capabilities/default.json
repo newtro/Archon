@@ -25,6 +25,8 @@
     "core:window:allow-outer-size",
     "core:window:allow-is-maximized",
     "core:window:allow-maximize",
-    "core:window:allow-available-monitors"
+    "core:window:allow-available-monitors",
+    "core:window:allow-hide",
+    "core:window:allow-show"
   ]
 }

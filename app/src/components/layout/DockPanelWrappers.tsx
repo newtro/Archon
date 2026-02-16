@@ -13,6 +13,8 @@ import { LogStreamPanel } from "../logs/LogStreamPanel";
 import { FlowRegistryPanel } from "../registry/FlowRegistryPanel";
 import { SettingsPanel } from "../settings/SettingsPanel";
 import { StartupPage } from "../startup/StartupPage";
+import { GatewayPanel } from "../gateway/GatewayPanel";
+import { loadFlow } from "../../lib/flow-storage";
 import { openOrFocusPanel } from "../../lib/layout-persistence";
 import { FileText } from "lucide-react";
 
@@ -246,6 +248,30 @@ export const StartupWrapper: React.FC<IDockviewPanelProps> = () => {
       onRemoveRecent={handleRemoveRecentProject}
       onGoToSettings={() => api && openOrFocusPanel(api, "settings")}
       onGoToFlows={() => api && openOrFocusPanel(api, "flows")}
+    />
+  );
+};
+
+// ── Gateway ─────────────────────────────────────────────────
+
+export const GatewayWrapper: React.FC<IDockviewPanelProps> = () => {
+  const {
+    send, isConnected, flows,
+    gatewayStatus, gatewayWebhooks, gatewayLogs, gatewayEvents, gatewayChannelStatuses, gatewayTestResult,
+  } = useAppState();
+
+  return (
+    <GatewayPanel
+      send={send}
+      isConnected={isConnected}
+      gatewayStatus={gatewayStatus}
+      webhooks={gatewayWebhooks}
+      logs={gatewayLogs}
+      recentEvents={gatewayEvents}
+      flows={flows.map(f => ({ id: f.id, name: f.name }))}
+      channelStatuses={gatewayChannelStatuses}
+      loadFlowDefinition={loadFlow}
+      testResult={gatewayTestResult}
     />
   );
 };

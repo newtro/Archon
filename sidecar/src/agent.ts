@@ -9,6 +9,8 @@ import { flowToolsServer, setFlowToolsWs, handleFlowToolResponse } from "./flow-
 import * as gitManager from "./git-manager.js";
 import { setAdoSettings } from "./ado-client.js";
 import { isClaudeCodeInstalled, isClaudeCodeAuthenticated } from "./claude-code-runner.js";
+import { GatewayManager } from "./gateway/gateway-manager.js";
+import type { GatewayMessageFromFrontend } from "./gateway/types.js";
 
 // Initialize MCP manager (server configs will be provided by the frontend)
 console.log(`[agent] MCP manager ready (${mcpManager.listServers().length} servers)`);
@@ -189,6 +191,12 @@ type GitMessage =
   | GitStartWatchingMessage | GitStopWatchingMessage
   | GitGenerateCommitMsgMessage | GitShowMessage;
 
+// Gateway message type — wraps all gateway-related messages
+interface GatewayMessage {
+  type: "gateway";
+  action: GatewayMessageFromFrontend;
+}
+
 type IncomingMessage =
   | UserMessage
   | SetApiKeyMessage
@@ -205,7 +213,8 @@ type IncomingMessage =
   | SetModelMessage
   | SetChatProviderMessage
   | CheckClaudeCodeMessage
-  | GitMessage;
+  | GitMessage
+  | GatewayMessage;
 
 function send(ws: WebSocket, data: unknown): void {
   if (ws.readyState === WebSocket.OPEN) {
@@ -221,6 +230,19 @@ const sdkSessionMap = new Map<string, string>();
 
 // Context Agent manager — one agent per session, used for flow execution
 const contextManager = new ContextAgentManager();
+
+// Gateway manager — tunnels, webhooks, and channel adapters
+export const gatewayManager = new GatewayManager();
+
+// Wire gateway → flow engine: execute flows triggered by webhooks and channel commands
+gatewayManager.setFlowExecutionCallback(async (broadcastWs, flow, input, flowApiKey) => {
+  // CachedFlowDefinition is structurally compatible with FlowDefinition
+  const state = await executeFlow(broadcastWs, flow as unknown as FlowDefinition, input, flowApiKey);
+  return state;
+});
+
+// Wire gateway → API key: so the gateway can access the current key for flow execution
+gatewayManager.setApiKeyProvider(() => apiKey);
 
 // Cumulative stats for chat-mode context view
 interface ChatCumulativeStats {
@@ -532,6 +554,12 @@ export async function handleMessage(
         const data = await gitManager.getCommitDiff(message.hash);
         send(ws, { type: "git_show_response", data });
       });
+      break;
+
+    // ── Gateway operations ────────────────────────────────────────
+    case "gateway":
+      gatewayManager.registerClient(ws);
+      await gatewayManager.handleMessage(ws, message.action);
       break;
   }
 }

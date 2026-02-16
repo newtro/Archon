@@ -19,6 +19,7 @@ export const PANEL_META: Record<string, { title: string; singleton: boolean }> =
   registry: { title: "Registry", singleton: true },
   settings: { title: "Settings", singleton: true },
   startup: { title: "Welcome", singleton: true },
+  gateway: { title: "Gateway", singleton: true },
 };
 
 export function getRenderer(component: string): "always" | "onlyWhenVisible" {
