@@ -5,7 +5,15 @@
 <h1 align="center">ArchonIDE</h1>
 
 <p align="center">
-  <strong>The IDE where you don't just use AI agents &mdash; you architect them.</strong>
+  <strong>The IDE where you don't just use AI agents &mdash; you command them.</strong>
+</p>
+
+<p align="center">
+  <em>
+    From the Greek <strong>ἄρχων</strong> (arkhon) &mdash; ruler, commander, one who leads the way.<br/>
+    Sharing a root with <strong>architect</strong> (arkhi + tekton: "master builder"),<br/>
+    Archon puts you in command of your AI agents &mdash; their strategies, their tools, their decisions.
+  </em>
 </p>
 
 <p align="center">
@@ -20,9 +28,11 @@
 
 ---
 
+In ancient Athens, the Archon was the chief magistrate &mdash; the one who directed how the city operated, not the one who did every job themselves. ArchonIDE applies the same principle to AI-assisted development: **you design the strategy, the agents execute it.**
+
 ArchonIDE is an **AI agent-first IDE** with a visual agentic flow designer. Built as a Tauri v2 desktop application with a React frontend and the Claude Agent SDK, it transforms AI-assisted coding from opaque and one-size-fits-all into transparent, composable, and deeply customizable.
 
-Current AI-powered IDEs operate as black boxes with fixed agent loops. ArchonIDE changes that by giving developers a visual canvas to design the exact agent workflows that power their coding &mdash; different flows for bug fixes, greenfield features, code reviews, and refactors. Every decision the AI makes is visible, editable, and shareable.
+Current AI-powered IDEs operate as black boxes with fixed agent loops. ArchonIDE changes that by giving developers a visual canvas to design and command the exact agent workflows that power their coding &mdash; different flows for bug fixes, greenfield features, code reviews, and refactors. Every decision the AI makes is visible, editable, and shareable. You are the Archon.
 
 ---
 
