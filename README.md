@@ -34,6 +34,12 @@ ArchonIDE is an **AI agent-first IDE** with a visual agentic flow designer. Buil
 
 Current AI-powered IDEs operate as black boxes with fixed agent loops. ArchonIDE changes that by giving developers a visual canvas to design and command the exact agent workflows that power their coding &mdash; different flows for bug fixes, greenfield features, code reviews, and refactors. Every decision the AI makes is visible, editable, and shareable. You are the Archon.
 
+<p align="center">
+  <img src="docs/screenshots/flow-designer.png" alt="ArchonIDE Flow Designer — a PR Review flow with ADO integration, human review gates, and multi-model routing" width="100%" />
+  <br/>
+  <em>The Flow Designer: a PR Review workflow with Azure DevOps integration, human review gates, and multi-model LLM routing.</em>
+</p>
+
 ---
 
 ## Features
