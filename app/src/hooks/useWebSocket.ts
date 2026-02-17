@@ -567,6 +567,7 @@ export function useWebSocket({ onMessage, onStatusChange, onFlowEvent, onConnect
 
       case "node_streaming":
       case "human_review_requested":
+      case "edge_traversed":
         onFlowEventRef.current?.(data as FlowExecutionEvent);
         break;
 

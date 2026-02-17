@@ -2,7 +2,7 @@ import { useContext } from "react";
 import { Handle, Position, NodeResizer, type NodeProps } from "@xyflow/react";
 import { NODE_REGISTRY, type FlowNodeData, type NodeKind } from "../../../lib/flow-types";
 import type { NodeExecState } from "../../../hooks/useFlowExecution";
-import { ExecNodeStatesContext } from "../FlowExecutionDiagram";
+import { ExecNodeStatesContext } from "../execution-contexts";
 import "./BaseNode.css";
 
 /** Read per-node execution state from the diagram context (if mounted inside one). */

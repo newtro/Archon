@@ -5,11 +5,37 @@ import type { FlowDefinition } from "../lib/flow-types";
 export type NodeExecState = "idle" | "running" | "streaming" | "completed" | "error" | "review";
 export type FlowExecStatus = "idle" | "running" | "completed" | "error";
 
+export interface ToolCallInfo {
+  id: string;
+  name: string;
+  args: Record<string, unknown>;
+  result?: string;
+  status: "loading" | "success" | "error";
+  durationMs?: number;
+}
+
 export interface NodeExecInfo {
   state: NodeExecState;
   streamingText: string;
+  input?: string;
+  inputPreview?: string;
   output?: NodeOutput;
   error?: string;
+  toolCalls?: ToolCallInfo[];
+}
+
+export interface EdgeExecInfo {
+  edgeId: string;
+  sourceNodeId: string;
+  targetNodeId: string;
+  signal: string;
+  dataPreview: string;
+  dataFull: string;
+  sourceKind: string;
+  sourceLabel: string;
+  targetKind: string;
+  targetLabel: string;
+  timestamp: number;
 }
 
 export interface FlowNodeMeta {
@@ -22,6 +48,7 @@ export interface FlowExecutionState {
   status: FlowExecStatus;
   executionId: string | null;
   nodeStates: Record<string, NodeExecInfo>;
+  edgeStates: Record<string, EdgeExecInfo>;
   nodeList: FlowNodeMeta[];
   flow: FlowDefinition | null;
   result: string | null;
@@ -32,6 +59,7 @@ const INITIAL_STATE: FlowExecutionState = {
   status: "idle",
   executionId: null,
   nodeStates: {},
+  edgeStates: {},
   nodeList: [],
   flow: null,
   result: null,
@@ -53,6 +81,7 @@ export function useFlowExecution(send: (msg: WSMessageToSidecar) => void) {
         status: "running",
         executionId: null,
         nodeStates: freshNodeStates,
+        edgeStates: {},
         nodeList: flow.nodes.map((n) => ({ id: n.id, kind: n.kind, label: n.label })),
         flow,
         result: null,
@@ -109,7 +138,12 @@ export function useFlowExecution(send: (msg: WSMessageToSidecar) => void) {
           ...prev,
           nodeStates: {
             ...prev.nodeStates,
-            [event.nodeId]: { state: "running", streamingText: "" },
+            [event.nodeId]: {
+              state: "running",
+              streamingText: "",
+              input: event.input,
+              inputPreview: event.inputPreview,
+            },
           },
         }));
         break;
@@ -132,31 +166,39 @@ export function useFlowExecution(send: (msg: WSMessageToSidecar) => void) {
         break;
 
       case "node_completed":
-        setExecState((prev) => ({
-          ...prev,
-          nodeStates: {
-            ...prev.nodeStates,
-            [event.nodeId]: {
-              state: "completed",
-              streamingText: "",
-              output: event.output,
+        setExecState((prev) => {
+          const existing = prev.nodeStates[event.nodeId];
+          return {
+            ...prev,
+            nodeStates: {
+              ...prev.nodeStates,
+              [event.nodeId]: {
+                ...existing,
+                state: "completed",
+                streamingText: "",
+                output: event.output,
+              },
             },
-          },
-        }));
+          };
+        });
         break;
 
       case "node_error":
-        setExecState((prev) => ({
-          ...prev,
-          nodeStates: {
-            ...prev.nodeStates,
-            [event.nodeId]: {
-              state: "error",
-              streamingText: "",
-              error: event.error,
+        setExecState((prev) => {
+          const existing = prev.nodeStates[event.nodeId];
+          return {
+            ...prev,
+            nodeStates: {
+              ...prev.nodeStates,
+              [event.nodeId]: {
+                ...existing,
+                state: "error",
+                streamingText: "",
+                error: event.error,
+              },
             },
-          },
-        }));
+          };
+        });
         break;
 
       case "flow_completed":
@@ -175,17 +217,86 @@ export function useFlowExecution(send: (msg: WSMessageToSidecar) => void) {
         }));
         break;
 
-      case "human_review_requested":
+      case "node_tool_call":
+        setExecState((prev) => {
+          const existing = prev.nodeStates[event.nodeId];
+          const newToolCall: ToolCallInfo = {
+            id: event.toolCall.id,
+            name: event.toolCall.name,
+            args: event.toolCall.args,
+            status: "loading",
+          };
+          return {
+            ...prev,
+            nodeStates: {
+              ...prev.nodeStates,
+              [event.nodeId]: {
+                ...existing,
+                toolCalls: [...(existing?.toolCalls ?? []), newToolCall],
+              },
+            },
+          };
+        });
+        break;
+
+      case "node_tool_result":
+        setExecState((prev) => {
+          const existing = prev.nodeStates[event.nodeId];
+          const updatedCalls = (existing?.toolCalls ?? []).map((tc) =>
+            tc.id === event.toolCallId
+              ? { ...tc, result: event.result, status: event.status as "success" | "error", durationMs: event.durationMs }
+              : tc,
+          );
+          return {
+            ...prev,
+            nodeStates: {
+              ...prev.nodeStates,
+              [event.nodeId]: {
+                ...existing,
+                toolCalls: updatedCalls,
+              },
+            },
+          };
+        });
+        break;
+
+      case "edge_traversed":
         setExecState((prev) => ({
           ...prev,
-          nodeStates: {
-            ...prev.nodeStates,
-            [event.nodeId]: {
-              state: "review",
-              streamingText: "",
+          edgeStates: {
+            ...prev.edgeStates,
+            [event.edgeId]: {
+              edgeId: event.edgeId,
+              sourceNodeId: event.sourceNodeId,
+              targetNodeId: event.targetNodeId,
+              signal: event.signal,
+              dataPreview: event.dataPreview,
+              dataFull: event.dataFull,
+              sourceKind: event.sourceKind,
+              sourceLabel: event.sourceLabel,
+              targetKind: event.targetKind,
+              targetLabel: event.targetLabel,
+              timestamp: event.timestamp,
             },
           },
         }));
+        break;
+
+      case "human_review_requested":
+        setExecState((prev) => {
+          const existing = prev.nodeStates[event.nodeId];
+          return {
+            ...prev,
+            nodeStates: {
+              ...prev.nodeStates,
+              [event.nodeId]: {
+                ...existing,
+                state: "review",
+                streamingText: "",
+              },
+            },
+          };
+        });
         break;
     }
   }, []);

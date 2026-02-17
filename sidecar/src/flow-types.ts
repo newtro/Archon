@@ -95,13 +95,14 @@ export interface FlowToolCall {
 /** Messages sent from sidecar to frontend during flow execution */
 export type FlowExecutionEvent =
   | { type: "flow_started"; executionId: string; flowId: string }
-  | { type: "node_started"; executionId: string; nodeId: string; kind: NodeKind }
+  | { type: "node_started"; executionId: string; nodeId: string; kind: NodeKind; input: string; inputPreview: string }
   | { type: "node_streaming"; executionId: string; nodeId: string; delta: string }
   | { type: "node_completed"; executionId: string; nodeId: string; output: NodeOutput }
   | { type: "node_error"; executionId: string; nodeId: string; error: string }
   | { type: "node_tool_call"; executionId: string; nodeId: string; toolCall: FlowToolCall }
   | { type: "node_tool_args_update"; executionId: string; nodeId: string; toolCallId: string; args: Record<string, unknown> }
   | { type: "node_tool_result"; executionId: string; nodeId: string; toolCallId: string; result: string; status: "success" | "error"; durationMs: number }
+  | { type: "edge_traversed"; executionId: string; edgeId: string; sourceNodeId: string; targetNodeId: string; signal: string; dataPreview: string; dataFull: string; sourceKind: NodeKind; sourceLabel: string; targetKind: NodeKind; targetLabel: string; timestamp: number }
   | { type: "flow_completed"; executionId: string; result: string; state: FlowState }
   | { type: "flow_error"; executionId: string; error: string }
   | {

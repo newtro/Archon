@@ -380,13 +380,14 @@ export type WSMessageFromSidecar =
 /** Flow execution events from sidecar */
 export type FlowExecutionEvent =
   | { type: "flow_started"; executionId: string; flowId: string }
-  | { type: "node_started"; executionId: string; nodeId: string; kind: string }
+  | { type: "node_started"; executionId: string; nodeId: string; kind: string; input: string; inputPreview: string }
   | { type: "node_streaming"; executionId: string; nodeId: string; delta: string }
   | { type: "node_completed"; executionId: string; nodeId: string; output: NodeOutput }
   | { type: "node_error"; executionId: string; nodeId: string; error: string }
   | { type: "node_tool_call"; executionId: string; nodeId: string; toolCall: ToolCall }
   | { type: "node_tool_args_update"; executionId: string; nodeId: string; toolCallId: string; args: Record<string, unknown> }
   | { type: "node_tool_result"; executionId: string; nodeId: string; toolCallId: string; result: string; status: ToolCallStatus; durationMs: number }
+  | { type: "edge_traversed"; executionId: string; edgeId: string; sourceNodeId: string; targetNodeId: string; signal: string; dataPreview: string; dataFull: string; sourceKind: string; sourceLabel: string; targetKind: string; targetLabel: string; timestamp: number }
   | { type: "flow_completed"; executionId: string; result: string; state: unknown }
   | { type: "flow_error"; executionId: string; error: string }
   | {

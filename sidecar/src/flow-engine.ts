@@ -349,7 +349,8 @@ async function executeNode(
   state.currentNodeId = node.id;
   state.turn++;
 
-  emitEvent(ws, { type: "node_started", executionId, nodeId: node.id, kind: node.kind });
+  const inputPreview = input.length > 200 ? input.slice(0, 200) + "..." : input;
+  emitEvent(ws, { type: "node_started", executionId, nodeId: node.id, kind: node.kind, input, inputPreview });
 
   const startTime = Date.now();
   let output: NodeOutput;
@@ -442,6 +443,32 @@ async function executeNode(
     if (node.kind !== "end") {
       const nextNodes = getNextNodes(flow, node.id, output.signal);
       for (const next of nextNodes) {
+        // Find the edge connecting source → target for the edge_traversed event
+        const traversedEdge = flow.edges.find(
+          (e) => e.source === node.id && e.target === next.id &&
+            (e.signal === output.signal || e.signal === "default")
+        );
+        if (traversedEdge) {
+          // Build a short preview (first 120 chars) and the full data payload
+          const dataPreview = output.result.length > 120
+            ? output.result.slice(0, 120) + "..."
+            : output.result;
+          emitEvent(ws, {
+            type: "edge_traversed",
+            executionId,
+            edgeId: traversedEdge.id,
+            sourceNodeId: node.id,
+            targetNodeId: next.id,
+            signal: output.signal,
+            dataPreview,
+            dataFull: output.result,
+            sourceKind: node.kind,
+            sourceLabel: node.label,
+            targetKind: next.kind,
+            targetLabel: next.label,
+            timestamp: Date.now(),
+          });
+        }
         await executeNode(ws, flow, next, state, output.result, executionId, abortController);
       }
     }
