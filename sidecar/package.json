@@ -16,7 +16,7 @@
     "chokidar": "^5.0.0",
     "cloudflared": "^0.7.1",
     "discord.js": "^14.25.1",
-    "fastify": "^5.7.4",
+    "fastify": "^5.12.1",
     "glob": "^11.1.0",
     "openai": "^4.104.0",
     "simple-git": "^3.30.0",
